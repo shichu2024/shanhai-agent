@@ -1,0 +1,4 @@
+# Multica / DSH agent runtime local state
+.dsh/
+.multica/
+AGENTS.md
