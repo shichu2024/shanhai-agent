@@ -144,7 +144,7 @@
 
 ## 附录：本轮抽查来源
 
-- Langfuse prompt 版本-trace 关联：[Langfuse 官方](https://langfuse.com)、[Build a Complete Langfuse Observability and Evaluation Pipeline](https://www.marketchpost.com)
+- Langfuse prompt 版本-trace 关联：[Langfuse 官方](https://langfuse.com)、[Build a Complete Langfuse Observability and Evaluation Pipeline](https://www.marktechpost.com)
 - 2026 Agent 治理平台品类：[AI Agent Governance: Frameworks, Tools & Best Practices — Sweet Security](https://www.sweet.security)、[9 Best AI Agent Governance Platforms in 2026 — Superblocks](https://www.superblocks.com)、[AI Agent Governance — Phinite.ai](https://www.phinite.ai)、[AI Agent Governance: A Framework for IT and Compliance — Avepoint](https://www.avepoint.com)、[Agentic AI Governance Maturity Model — CSA Labs](https://labs.cloudsecurityalliance.org)
 
 ---
