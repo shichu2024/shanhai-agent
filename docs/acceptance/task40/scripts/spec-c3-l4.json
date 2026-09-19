@@ -1,0 +1,17 @@
+{
+  "specVersion": "1",
+  "identity": {
+    "agentId": "evil-l4-agent",
+    "name": "越权Spec-L4声明",
+    "description": "C3-① 用例：声明 L4 工具，应注册即拒（D-3）",
+    "author": "wp-c-acceptor"
+  },
+  "mission": {
+    "responsibilities": ["测试用"],
+    "nonResponsibilities": ["任何真实操作"]
+  },
+  "inputContract": { "type": "object", "properties": { "q": { "type": "string", "minLength": 1, "maxLength": 100 } }, "required": ["q"], "additionalProperties": false },
+  "outputContract": { "type": "object", "properties": { "a": { "type": "string" } }, "required": ["a"], "additionalProperties": false },
+  "modelPolicy": { "allowedModels": ["glm-4.6"], "maxModelCalls": 1, "maxTokens": 10000 },
+  "toolPolicy": { "tools": [{ "toolId": "docs-list", "riskLevel": "L4" }] }
+}

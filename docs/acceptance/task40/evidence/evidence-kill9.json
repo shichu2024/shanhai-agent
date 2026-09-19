@@ -1,0 +1,49 @@
+{
+  "steps": [
+    {
+      "step": "killed",
+      "pid": 17988,
+      "preKillEventCount": 14,
+      "preKillPolicyDenied": 1
+    },
+    {
+      "step": "inject-tear",
+      "indexRowsBefore": 14,
+      "indexRowsAfterTear": 12,
+      "fileLines": 14
+    }
+  ],
+  "recovery": {
+    "reconciledTasks": [
+      "ddd2aaec-d590-44a6-a82b-c6a1a72ad5b8"
+    ],
+    "crashMarkedTasks": [
+      "ddd2aaec-d590-44a6-a82b-c6a1a72ad5b8"
+    ]
+  },
+  "a7_indexRebuild": {
+    "fileLineCount": 16,
+    "indexRowCount": 16,
+    "consistent": true,
+    "pass": true
+  },
+  "a8_t2_recheck": {
+    "policyDeniedEvents": [
+      {
+        "toolId": "undeclared-evil",
+        "reasonCode": "not_declared_in_spec",
+        "consecutiveDenialCount": 1
+      }
+    ],
+    "pass": true
+  },
+  "a9_ordering": {
+    "taskStatus": "failed",
+    "terminalFailureClass": "Runtime(CrashRecovery)",
+    "crashMarkedAfterAllPreCrashEvents": false,
+    "crashAppendedCount": 2,
+    "crashEventsInIndex": 1,
+    "crashTraceOnFullIndex": true,
+    "pass": true
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "c3_2": {
+    "versionId": "9cd0fc6f-bea5-42e1-b591-0ef62caa557b",
+    "taskId": "9c56b1ef-4b6a-489e-b9ec-ab4133c17226",
+    "status": "failed",
+    "terminalFailureClass": "Runtime(BudgetExceeded)",
+    "modelCallCount": 1,
+    "failureRecords": [
+      {
+        "failureClass": "Runtime",
+        "subClass": "BudgetExceeded"
+      }
+    ]
+  },
+  "t1_onFailed": {
+    "taskId": "9c56b1ef-4b6a-489e-b9ec-ab4133c17226",
+    "agentVersionId": "9cd0fc6f-bea5-42e1-b591-0ef62caa557b",
+    "specContentHash": "5c0415b5d2699fff21dbb4713d5139a06b2a24d6a9190b259a40595e298ea047",
+    "hasTaskStarted": true,
+    "bindingSnapshot": {
+      "toolVersions": [
+        {
+          "toolId": "docs-list",
+          "implVersion": "0.1.0"
+        }
+      ],
+      "modelId": "mock-model",
+      "promptHash": "08a654443f74a2c76529b73482ef75ce7d77727df2f218b34191a2a57ffb89ac"
+    },
+    "specIdentity": {
+      "agentId": "c3-budget",
+      "name": "c3-budget",
+      "description": "C3 用例 c3-budget",
+      "author": "wp-c-acceptor"
+    }
+  },
+  "c3_3": {
+    "versionId": "15ddc5a9-0cd1-4500-afdd-f95bb0d02208",
+    "taskId": "e2e418da-ae0f-492b-b59b-0897c11705c1",
+    "status": "failed",
+    "terminalFailureClass": "Policy(PolicyBlocked)",
+    "consecutiveDenialCount": 2,
+    "failureRecords": [
+      {
+        "failureClass": "Policy",
+        "subClass": "PolicyBlocked"
+      }
+    ],
+    "attributionNoDrift": true
+  },
+  "rejectedInput": {
+    "rejected": true,
+    "message": "输入不符 Input Contract（落库前拒绝，A3 §3.1-①）"
+  },
+  "t2": {
+    "agentVersionId": "15ddc5a9-0cd1-4500-afdd-f95bb0d02208",
+    "policyDeniedEvents": [
+      {
+        "eventId": "9376a2a5-3298-4366-93b4-99565ec30a8a",
+        "taskId": "e2e418da-ae0f-492b-b59b-0897c11705c1",
+        "timestamp": "2026-09-19T09:13:35.328115316Z",
+        "callNo": 1,
+        "toolId": "undeclared-evil",
+        "reasonCode": "not_declared_in_spec",
+        "consecutiveDenialCount": 1
+      },
+      {
+        "eventId": "0343aa91-34a4-4d66-b317-5737340392ce",
+        "taskId": "e2e418da-ae0f-492b-b59b-0897c11705c1",
+        "timestamp": "2026-09-19T09:13:35.335115316Z",
+        "callNo": 2,
+        "toolId": "another-evil",
+        "reasonCode": "not_declared_in_spec",
+        "consecutiveDenialCount": 2
+      }
+    ],
+    "rejectedRequests": [
+      {
+        "kind": "task_creation",
+        "target": "c3-policy",
+        "rejectReason": "[{\"path\":\"input.topic\",\"message\":\"期望 必填字段，实际 缺失\"},{\"path\":\"input.wrong\",\"message"
+      }
+    ],
+    "unresolvableTaskCreations": 0
+  }
+}

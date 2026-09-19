@@ -1,0 +1,26 @@
+{
+  "ok": false,
+  "error": "Spec 注册被拒（A1 §4 准入校验失败）",
+  "issues": [
+    {
+      "path": "toolPolicy.tools[0].riskLevel",
+      "message": "声明 L4 与登记 L0 不一致"
+    },
+    {
+      "path": "toolPolicy.tools[0].riskLevel",
+      "message": "docs-list 为 L4：L3/L4 声明注册即拒（D-3 裁决；登记等级 L0）"
+    }
+  ]
+}
+exit=1
+{
+  "ok": false,
+  "error": "Spec 注册被拒（A1 §4 准入校验失败）",
+  "issues": [
+    {
+      "path": "toolPolicy.tools[0].toolId",
+      "message": "未注册：shell-exec"
+    }
+  ]
+}
+exit=1

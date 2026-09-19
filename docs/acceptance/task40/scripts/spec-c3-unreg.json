@@ -1,0 +1,17 @@
+{
+  "specVersion": "1",
+  "identity": {
+    "agentId": "evil-unreg-agent",
+    "name": "越权Spec-未注册工具",
+    "description": "C3-① 用例：引用未登记工具 shell-exec，应注册即拒（引用完整性）",
+    "author": "wp-c-acceptor"
+  },
+  "mission": {
+    "responsibilities": ["测试用"],
+    "nonResponsibilities": ["任何真实操作"]
+  },
+  "inputContract": { "type": "object", "properties": { "q": { "type": "string", "minLength": 1, "maxLength": 100 } }, "required": ["q"], "additionalProperties": false },
+  "outputContract": { "type": "object", "properties": { "a": { "type": "string" } }, "required": ["a"], "additionalProperties": false },
+  "modelPolicy": { "allowedModels": ["glm-4.6"], "maxModelCalls": 1, "maxTokens": 10000 },
+  "toolPolicy": { "tools": [{ "toolId": "shell-exec", "riskLevel": "L1" }] }
+}

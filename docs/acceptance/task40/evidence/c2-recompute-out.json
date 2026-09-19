@@ -1,0 +1,113 @@
+{
+  "run": "D:/code/shanhai-agent/experiment-runs/hyp4-2026-09-19T07-44-53/traces",
+  "taskCount": 60,
+  "layers": {
+    "hyp4-s1-summary|A": {
+      "N": 10,
+      "denom": 10,
+      "firstPass": 10,
+      "rate": "100.0%",
+      "wilson95": "[72.2%, 100.0%]",
+      "withRetry": "100.0%",
+      "avgModelCalls": "1.00",
+      "attemptFailHist": {},
+      "terminalHist": {},
+      "excluded": {
+        "provider_infra": 0,
+        "provider_rejected_schema": 0
+      },
+      "decisionLine": "≥80% 通过"
+    },
+    "hyp4-s1-summary|B": {
+      "N": 10,
+      "denom": 10,
+      "firstPass": 9,
+      "rate": "90.0%",
+      "wilson95": "[59.6%, 98.2%]",
+      "withRetry": "90.0%",
+      "avgModelCalls": "1.20",
+      "attemptFailHist": {
+        "schema_violation": 3
+      },
+      "terminalHist": {
+        "terminal:schema_violation": 1
+      },
+      "excluded": {
+        "provider_infra": 0,
+        "provider_rejected_schema": 0
+      },
+      "decisionLine": "≥80% 通过"
+    },
+    "hyp4-s2-extraction|A": {
+      "N": 10,
+      "denom": 10,
+      "firstPass": 9,
+      "rate": "90.0%",
+      "wilson95": "[59.6%, 98.2%]",
+      "withRetry": "100.0%",
+      "avgModelCalls": "1.00",
+      "attemptFailHist": {
+        "call_timeout": 1
+      },
+      "terminalHist": {},
+      "excluded": {
+        "provider_infra": 0,
+        "provider_rejected_schema": 0
+      },
+      "decisionLine": "≥80% 通过"
+    },
+    "hyp4-s2-extraction|B": {
+      "N": 10,
+      "denom": 10,
+      "firstPass": 10,
+      "rate": "100.0%",
+      "wilson95": "[72.2%, 100.0%]",
+      "withRetry": "100.0%",
+      "avgModelCalls": "1.00",
+      "attemptFailHist": {},
+      "terminalHist": {},
+      "excluded": {
+        "provider_infra": 0,
+        "provider_rejected_schema": 0
+      },
+      "decisionLine": "≥80% 通过"
+    },
+    "hyp4-s3-decision-report|A": {
+      "N": 10,
+      "denom": 10,
+      "firstPass": 9,
+      "rate": "90.0%",
+      "wilson95": "[59.6%, 98.2%]",
+      "withRetry": "100.0%",
+      "avgModelCalls": "3.00",
+      "attemptFailHist": {
+        "call_timeout": 1
+      },
+      "terminalHist": {},
+      "excluded": {
+        "provider_infra": 0,
+        "provider_rejected_schema": 0
+      },
+      "decisionLine": "≥80% 通过"
+    },
+    "hyp4-s3-decision-report|B": {
+      "N": 10,
+      "denom": 10,
+      "firstPass": 8,
+      "rate": "80.0%",
+      "wilson95": "[49.0%, 94.3%]",
+      "withRetry": "100.0%",
+      "avgModelCalls": "3.20",
+      "attemptFailHist": {
+        "truncation": 1,
+        "schema_violation": 1
+      },
+      "terminalHist": {},
+      "excluded": {
+        "provider_infra": 0,
+        "provider_rejected_schema": 0
+      },
+      "decisionLine": "≥80% 通过"
+    }
+  }
+}

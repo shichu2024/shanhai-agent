@@ -1,0 +1,18 @@
+[2m      Tests [22m [1m[32m50 passed[39m[22m[90m (50)[39m
+[2m   Start at [22m 17:16:32
+[2m   Duration [22m 2.72s[2m (transform 1.03s, setup 0ms, collect 3.24s, tests 2.41s, environment 3ms, prepare 2.05s)[22m
+
+
+=== T3 发布扫描（仓库根） ===
+T3 发布安全扫描：D:\code\shanhai-agent
+零命中：通过（T3 发布安全断言）
+scan_exit=
+=== T3 fail-fast ===
+{
+  "ok": false,
+  "error": "配置不完整：环境变量 SHANHAI_ANTHROPIC_AUTH_TOKEN 缺失（T3：密钥仅环境变量注入，仓库/发布物只留占位）"
+}
+{
+  "ok": false,
+  "error": "未找到配置文件（Z:/missing.json）。T3 发布安全规则：无配置即拒绝启动——请复制 config.example.json 为 config.local.json 并通过环境变量注入密钥。"
+}

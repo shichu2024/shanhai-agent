@@ -1,0 +1,144 @@
+{
+  "f1_cli_defect": {
+    "crashedQueuedTasks": [
+      {
+        "taskId": "c1b58902-2100-484a-9149-6a1881d8ef6c",
+        "status": "failed",
+        "terminalFailureClass": "Runtime(CrashRecovery)",
+        "createdAt": "2026-09-19T09:09:48.452115293Z",
+        "startedAt": null,
+        "endedAt": "2026-09-19T09:09:54.969115294Z"
+      }
+    ],
+    "traceSequence": [
+      {
+        "t": "2026-09-19T09:09:48.456115293Z",
+        "event": "task_created",
+        "lastKnownStatus": null,
+        "failure": null
+      },
+      {
+        "t": "2026-09-19T09:09:48.457115293Z",
+        "event": "contract_checked",
+        "lastKnownStatus": null,
+        "failure": null
+      },
+      {
+        "t": "2026-09-19T09:09:48.465115293Z",
+        "event": "task_queued",
+        "lastKnownStatus": null,
+        "failure": null
+      },
+      {
+        "t": "2026-09-19T09:09:54.963115294Z",
+        "event": "crash_recovery_marked",
+        "lastKnownStatus": "queued",
+        "failure": null
+      },
+      {
+        "t": "2026-09-19T09:09:54.970115294Z",
+        "event": "task_failed",
+        "lastKnownStatus": null,
+        "failure": "Runtime(CrashRecovery)"
+      }
+    ],
+    "c3_1_rejectedRegistrations": [
+      {
+        "kind": "spec_registration",
+        "target": "evil-l4-agent",
+        "rejectReason": "[{\"path\":\"toolPolicy.tools[0].riskLevel\",\"message\":\"声明 L4 与登记 L0 不一致\"},{\"path\":\"toolPolicy.tools[0].riskLevel\",\"message\":\"docs-list 为 L4：L3/L4 声明注册即拒（D-3 裁决；登记等级 L0）\"}]"
+      },
+      {
+        "kind": "spec_registration",
+        "target": "evil-unreg-agent",
+        "rejectReason": "[{\"path\":\"toolPolicy.tools[0].toolId\",\"message\":\"未注册：shell-exec\"}]"
+      }
+    ]
+  },
+  "c1": {
+    "taskRow": {
+      "taskId": "44ac8716-a1f6-4fe4-b2af-76ab765908ea",
+      "agentId": "docs-analyst",
+      "agentVersionId": "ee4c167e-22e6-443e-b7a7-c9ae168b1659",
+      "status": "succeeded",
+      "modelCallCount": 5,
+      "tokensUsed": 26568,
+      "attemptCount": 7,
+      "terminalFailureClass": null
+    },
+    "eventCount": 37,
+    "eventTypes": [
+      "task_created",
+      "contract_checked",
+      "task_queued",
+      "task_started",
+      "attempt_started",
+      "model_call_completed",
+      "tool_call_requested",
+      "attempt_started",
+      "tool_call_executed",
+      "attempt_started",
+      "model_call_completed",
+      "tool_call_requested",
+      "attempt_started",
+      "tool_call_executed",
+      "tool_call_requested",
+      "attempt_started",
+      "tool_call_executed",
+      "attempt_started",
+      "model_call_completed",
+      "tool_call_requested",
+      "attempt_started",
+      "tool_call_executed",
+      "tool_call_requested",
+      "attempt_started",
+      "tool_call_executed",
+      "attempt_started",
+      "model_call_completed",
+      "tool_call_requested",
+      "attempt_started",
+      "tool_call_executed",
+      "tool_call_requested",
+      "attempt_started",
+      "tool_call_executed",
+      "attempt_started",
+      "model_call_completed",
+      "contract_checked",
+      "task_succeeded"
+    ],
+    "toolCalls": [
+      "docs-list",
+      "docs-list",
+      "docs-list",
+      "docs-read",
+      "docs-read",
+      "docs-read",
+      "docs-read"
+    ],
+    "bindingSnapshot": {
+      "toolVersions": [
+        {
+          "toolId": "docs-list",
+          "implVersion": "0.1.0"
+        },
+        {
+          "toolId": "docs-read",
+          "implVersion": "0.1.0"
+        }
+      ],
+      "modelId": "glm-4.6",
+      "promptHash": "5f41974e30837dd3f944313c919374c06c56011fec85fcf9f18872aa5e7ae05e"
+    },
+    "output": {
+      "summary": "docs/ 目录含两个子目录共 25 个文件。phase1/（17 个文件）为山海司第一阶段设计的三角色对抗式讨论归档（方案设计师/反方审查官/综合决策官，01–15 号文档）及最终产出《第一阶段设计文档-定稿》，定义了三条设计底线、WP-A/B/C 工作包、Task 状态机、L0–L4 工具风险闸门与 C1/C2/C3、T1/T2/T3 验收标准。spec/（8 个文件）为 WP-A 规格重建交付物：A0 扫描出基线文档 64 处占位标记污染，A1–A6 分别重建 Spec Schema、Model/Tool Policy、Task 状态机、失败分类、版本状态机与事件模型，以 01–15 号归档 + 定稿为唯一规范来源，并映射到 WP-B 八模块实现输入。",
+      "subdirs": [
+        "phase1",
+        "spec"
+      ],
+      "filesCovered": 25,
+      "keyFinding": "核心发现：基线设计文档已被 64 处占位标记污染不可引用，文档链以 phase1/ 定稿为最高权威、spec/ A0–A6 为唯一可执行规范来源；A1 明确 Spec 快照不可变（SQLite 无 UPDATE 路径）、L3/L4 工具注册即拒（D-3）、maxModelCalls/maxTokens 无默认强制显式声明（D-1）。",
+      "verdict": "ok"
+    },
+    "outputContractVerdict": "pass"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "specVersion": "1",
+  "identity": {
+    "agentId": "docs-analyst",
+    "name": "文档分析员",
+    "description": "对本仓库 docs/ 目录做只读分析并产出结构化摘要（C1 真实业务只读任务，WP-C 验收）",
+    "author": "wp-c-acceptor"
+  },
+  "mission": {
+    "responsibilities": ["使用 docs-list 与 docs-read 工具盘点并阅读 docs/ 目录", "产出 docs/ 目录的结构化摘要"],
+    "nonResponsibilities": ["修改任何文件", "读取 docs/ 之外的任何路径"]
+  },
+  "inputContract": {
+    "type": "object",
+    "properties": {
+      "topic": { "type": "string", "minLength": 1, "maxLength": 200, "description": "分析主题" }
+    },
+    "required": ["topic"],
+    "additionalProperties": false
+  },
+  "outputContract": {
+    "type": "object",
+    "properties": {
+      "summary": { "type": "string", "minLength": 20, "maxLength": 500 },
+      "subdirs": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 }, "minItems": 1, "maxItems": 10 },
+      "filesCovered": { "type": "integer", "minimum": 1, "maximum": 1000 },
+      "keyFinding": { "type": "string", "minLength": 10, "maxLength": 300 },
+      "verdict": { "type": "string", "enum": ["ok", "needs-review"] }
+    },
+    "required": ["summary", "subdirs", "filesCovered", "keyFinding", "verdict"],
+    "additionalProperties": false
+  },
+  "modelPolicy": {
+    "allowedModels": ["glm-4.6"],
+    "maxModelCalls": 12,
+    "maxTokens": 200000,
+    "maxAttempts": 2,
+    "callTimeoutMs": 120000
+  },
+  "toolPolicy": {
+    "tools": [
+      { "toolId": "docs-list", "riskLevel": "L0" },
+      { "toolId": "docs-read", "riskLevel": "L0" }
+    ]
+  }
+}
