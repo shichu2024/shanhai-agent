@@ -121,3 +121,16 @@ export function approvalSpec(agentId: string, overrides: { approvalPolicy?: Reco
     extraTop: { approvalPolicy: { mode: 'onHighRisk', timeoutMs: 86400000, ...overrides.approvalPolicy } },
   });
 }
+
+/** 批次三用例基座：持久化记忆 Spec（A1 §2.1 memoryPolicy.persistent；injection 缺省 = off） */
+export function memorySpec(agentId: string, memoryPolicy: Record<string, unknown> = {}): Record<string, unknown> {
+  return sampleSpec({
+    agentId,
+    extraTop: { memoryPolicy: { type: 'persistent', ...memoryPolicy } },
+  });
+}
+
+/** 拆分构造密钥样例（源码零完整模式命中——T3 扫描惯例） */
+export function fakeSecret(): string {
+  return ['sk-ant-api', '03-xxxxxxxxxx', 'xxxxxxxxxxxxxx'].join('');
+}

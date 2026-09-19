@@ -95,11 +95,12 @@ export class StateManager {
     }
 
     // v1.1 只读警示（A3 §6）：不改状态、不写 FailureRecord、不写 Trace——可见性交还操作者
-    const now = Date.now();
+    // P3-②（批次二反方遗留）：比较锚点统一用 nowNs()（与 createdAt/timeoutAt 同为 RFC3339 亚秒精度）——
+    // toISOString() 固定 3 位毫秒，与 6+ 位小数做字符串比较存在亚秒级漏判（同毫秒内 '.500Z' > '.499999Z' 假不成立）
     report.staleQueuedTasks = (
       this.db
         .prepare(`SELECT taskId FROM task_record WHERE status = 'queued' AND createdAt < ?`)
-        .all(new Date(now - STALE_QUEUED_GRACE_MS).toISOString()) as { taskId: string }[]
+        .all(new Date(Date.now() - STALE_QUEUED_GRACE_MS - 1).toISOString().replace(/\.\d{3}Z$/, '.999999999Z')) as { taskId: string }[]
     ).map((r) => r.taskId);
     report.stalePausedTasks = (
       this.db

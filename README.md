@@ -14,7 +14,7 @@ npm install
 npm run build
 cp config.example.json config.local.json   # 按需修改 baseUrl / 模型白名单
 export SHANHAI_ANTHROPIC_AUTH_TOKEN=<你的密钥>   # T3：密钥仅环境变量注入，仓库只留占位
-npm test                                    # 112 项测试（54 第一阶段存量 + 批次一 34 + 批次二 24：脱敏/灰度/report/迁移）
+npm test                                    # 129 项测试（54 第一阶段存量 + 批次一 34 + 批次二 24 + 批次三 17：记忆/Evolution/脱敏加固/迁移）
 ```
 
 ## CLI（A5 §2 命令表）
@@ -61,6 +61,21 @@ npm run cli -- agent canary clear <agentId>                        # 灰度归�
 npm run cli -- agent promote <agentId>                             # canary→current + 清零（判据为建议，决定权留人）
 npm run cli -- agent report <agentId> [--since <RFC3339>]          # 分组通过率 + promote 判据（insufficient-sample 显式）
                                                                    #   旁挂三单列：审批超时计数 / 受工具升级影响的 Spec(R-5) / stale 汇总
+```
+
+## CLI · 第二阶段批次三（认知与演进）
+
+```bash
+# 持久化记忆（A1 §2.1 memoryPolicy.persistent，D-13）：content 过同一 redactionPolicy 管道；
+#   candidate→active（≥2 独立 taskId）→ degraded（注入且 Failed）→ 恢复边（evidence − baseline ≥ 2）；
+#   injection 缺省 off（默认零注入攻击面）；惰性全量校正幂等
+npm run cli -- memory list [--agent <agentId>]           # 记忆清单（顺带惰性校正）
+
+# 演进候选（A1 §2.3 evolutionPolicy，D-14）：agentId 聚类、阈值触发、evidenceRefs 回链；
+#   人工确认制——系统永不自动注册/发布；requireReviewed 强制 true 不可关闭
+npm run cli -- evolution list                            # 候选清单（顺带惰性聚合）
+npm run cli -- evolution confirm <candidateId> [--proposed-change <text>]
+# 产物路径（人工起草）：register → review（检视门）→ release --no-pointer → canary set → promote
 ```
 
 ## 模块地图（src/）

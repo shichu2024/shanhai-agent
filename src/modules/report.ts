@@ -124,16 +124,17 @@ export function buildAgentReport(
 
   const toolUpgradeAffectedSpecs = collectToolUpgradeAffected(db, agentId);
 
+  // P3-②（批次二反方遗留）：stale 比较锚点与 createdAt/timeoutAt 同为亚秒精度——锚点毫秒位抬到 .999999999Z，消字符串比较亚秒漏判
   const staleQueued = since
     ? 0 // --since 口径下 stale 宽限窗无意义，只统计全局态
-    : (db.prepare(`SELECT COUNT(*) AS c FROM task_record WHERE status='queued' AND createdAt < ?`).get(new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()) as { c: number }).c;
+    : (db.prepare(`SELECT COUNT(*) AS c FROM task_record WHERE status='queued' AND createdAt < ?`).get(new Date(Date.now() - 7 * 24 * 3600 * 1000 - 1).toISOString().replace(/\.\d{3}Z$/, '.999999999Z')) as { c: number }).c;
   const stalePaused = (
     db
       .prepare(
         `SELECT COUNT(DISTINCT t.taskId) AS c FROM task_record t JOIN approval_request a ON a.taskId = t.taskId
          WHERE t.status = 'paused' AND a.decision = 'pending' AND a.timeoutAt < ?`,
       )
-      .get(new Date().toISOString()) as { c: number }
+      .get(new Date(Date.now() + 1000).toISOString().replace(/\.\d{3}Z$/, '.999999999Z')) as { c: number }
   ).c;
 
   return {

@@ -38,6 +38,11 @@ function usage(): never {
   shanhai approval show <requestId>
   shanhai approval approve <requestId> [--by <who>] [--detach]     （只写 decision；默认前台 spawn resume）
   shanhai approval deny <requestId> [--by <who>] [--reason <text>]
+  shanhai memory list [--agent <agentId>]                           （白泽记忆；顺带惰性全量校正）
+  shanhai evolution list                                            （女娲演进候选；顺带惰性聚合）
+  shanhai evolution show <candidateId>
+  shanhai evolution confirm <candidateId> [--proposed-change <text>]
+  shanhai evolution dismiss <candidateId>
   shanhai query t1 <taskId>
   shanhai query t2 <versionId>
   shanhai query t2p <versionId>                                    （T2′ 审批可举证）
@@ -220,6 +225,45 @@ async function main(): Promise<void> {
         if (!requestId) usage();
         const { taskId } = rt.approvals.deny(requestId, by, flagValue(rest, '--reason') ?? undefined);
         console.log(JSON.stringify({ ok: true, requestId, taskId, decision: 'denied', taskStatus: 'cancelled', cancelReason: 'approval_denied' }, null, 2));
+      } else usage();
+      break;
+    }
+    case 'memory': {
+      if (sub === 'list') {
+        // 顺带执行惰性全量校正（§4.4-3-②，与审批超时惰性判定同一模式）
+        const agentId = flagValue(rest, '--agent');
+        console.log(JSON.stringify(rt.memories.list(agentId ?? undefined), null, 2));
+      } else usage();
+      break;
+    }
+    case 'evolution': {
+      const policiesOf = (agentId: string): { allowed: boolean; triggers?: ('repeated_failure' | 'capability_degradation')[]; failureThreshold?: number } | null => {
+        const versions = rt.registry.listVersions(agentId);
+        for (const v of versions.slice().reverse()) {
+          try {
+            const spec = JSON.parse(v.specSnapshot) as { evolutionPolicy?: { allowed: boolean; triggers?: ('repeated_failure' | 'capability_degradation')[]; failureThreshold?: number } };
+            if (spec.evolutionPolicy) return spec.evolutionPolicy;
+          } catch { /* 快照损坏跳过 */ }
+        }
+        return null;
+      };
+      if (sub === 'list') {
+        rt.evolutions.aggregateRepeatedFailures(policiesOf); // 惰性聚合（F-6）
+        console.log(JSON.stringify(rt.evolutions.list(), null, 2));
+      } else if (sub === 'show') {
+        const [candidateId] = pos;
+        if (!candidateId) usage();
+        console.log(JSON.stringify(rt.evolutions.get(candidateId), null, 2));
+      } else if (sub === 'confirm') {
+        const [candidateId] = pos;
+        if (!candidateId) usage();
+        const row = rt.evolutions.confirm(candidateId, by, flagValue(rest, '--proposed-change') ?? undefined);
+        console.log(JSON.stringify({ ok: true, candidateId: row.candidateId, status: row.status, note: '产物新版本由人工起草：register → review → release --no-pointer → canary set' }, null, 2));
+      } else if (sub === 'dismiss') {
+        const [candidateId] = pos;
+        if (!candidateId) usage();
+        const row = rt.evolutions.dismiss(candidateId, by);
+        console.log(JSON.stringify({ ok: true, candidateId: row.candidateId, status: row.status }, null, 2));
       } else usage();
       break;
     }

@@ -27,6 +27,8 @@ export interface ExecSpec {
   toolPolicy: { tools: SpecToolDeclaration[]; maxConsecutiveDenials?: number };
   /** v1.1（A1 §2.2）：缺省 = 无审批路径（第一阶段行为） */
   approvalPolicy?: { mode: 'never' | 'onHighRisk'; timeoutMs?: number; onTimeout?: 'deny' | 'fail' } | null;
+  /** v1.1（A1 §2.1，D-13）：缺省 working（V1 行为——无记忆）；persistent 且 injection=context 时注入 */
+  memoryPolicy?: { type: 'working' | 'persistent'; writePolicy?: 'task_output'; maxEntriesPerTask?: number; retentionDays?: number; injection?: 'off' | 'context' } | null;
 }
 
 /** PauseSnapshot 的执行态载荷（A3 §5a：contextJson + callCounters + nextCallRef 的结构化形态） */
@@ -67,6 +69,9 @@ export interface ExecutorContext {
   taskStartedAtMs?: number;
   /** v1.1（A3 §2/§4）：Paused 累计时长——任务级超时挂起期间暂停计时（挂钟 ≠ 执行时钟） */
   timeoutCreditMs?: number;
+  /** v1.1（D-13）：记忆注入文本（injection=context 且有 active/degraded 记忆时由 TaskManager 构造；
+   * 默认 off → undefined——无任何注入行为）。文本自带边界标记与「记忆不是指令」声明（V1.1 §14.3）。 */
+  memoryInjection?: string;
 }
 
 export class ExecutorSucceeded {
@@ -137,7 +142,7 @@ export async function runAgentLoop(ctx: ExecutorContext): Promise<ExecutorSuccee
     approvalMode: spec.approvalPolicy?.mode ?? null,
   });
 
-  const system = buildSystemPrompt(spec, ctx.strategy);
+  const system = buildSystemPrompt(spec, ctx.strategy, ctx.memoryInjection);
   const callNos: CallNos = { modelCallNo: 0, toolCallNo: 0 };
   let messages: ChatMessage[] = [{ role: 'user', text: JSON.stringify(ctx.input) }];
   const startedAt = Date.now();
@@ -405,13 +410,14 @@ function recordContractChecked(ctx: ExecutorContext, which: 'input' | 'output', 
   ctx.trace.recordTaskEvent(ctx.base, 'contract_checked', { which, verdict, violations });
 }
 
-function buildSystemPrompt(spec: ExecSpec, strategy: 'native' | 'prompt' | null): string {
+function buildSystemPrompt(spec: ExecSpec, strategy: 'native' | 'prompt' | null, memoryInjection?: string): string {
   const lines: string[] = [];
   lines.push(`你是 Agent「${spec.identity.name}」。${spec.identity.description}`);
   lines.push(`\n## 职责边界\n职责：\n${spec.mission.responsibilities.map((r) => `- ${r}`).join('\n')}`);
   lines.push(`非职责（禁止）：\n${spec.mission.nonResponsibilities.map((r) => `- ${r}`).join('\n')}`);
   const toolLines = spec.toolPolicy.tools.map((t) => `- ${t.toolId}（${t.riskLevel}）`);
   if (toolLines.length > 0) lines.push(`\n## 可用工具\n${toolLines.join('\n')}`);
+  if (memoryInjection !== undefined) lines.push(`\n${memoryInjection}`); // 边界标记 + 「不是指令」声明由 MemoryManager 构造（V1.1 §14.3）
   lines.push(`\n## 输出要求`);
   if (strategy === 'native') {
     lines.push(`通过工具 ${OUTPUT_TOOL_NAME} 提交最终输出；参数必须符合契约。`);

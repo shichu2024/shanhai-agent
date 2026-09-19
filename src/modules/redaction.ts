@@ -15,9 +15,17 @@ export interface RedactionPolicy {
   rules: RedactionRule[];
 }
 
-/** 排除表键名（A6 §8 机制 1）：信封 10 字段由 TraceRecorder 结构承载，此处防御 payload 内同名/摘要字段 */
+/** 信封 10 字段（A6 §2）：属主 = TraceRecorder（结构承载，payload 携带同名键即剥离，见 STRIP_AT_ENTRY） */
+const ENVELOPE_KEYS = new Set(['eventId', 'timestamp', 'traceId', 'taskId', 'agentId', 'agentVersionId', 'specContentHash', 'eventType', 'callNo', 'callKind', 'attemptNo']);
+
+/** 排除表键名（A6 §8 机制 1）：零改写（walk 不递归改写其值）——含合法载荷键 bindingSnapshot 与全部 *Digest 字段 */
 const EXCLUDED_KEY_SUFFIX = /Digest$/;
-const EXCLUDED_KEYS = new Set(['bindingSnapshot', 'eventId', 'timestamp', 'traceId', 'taskId', 'agentId', 'agentVersionId', 'specContentHash', 'eventType', 'callNo', 'callKind', 'attemptNo']);
+const EXCLUDED_KEYS = new Set([...ENVELOPE_KEYS, 'bindingSnapshot']);
+
+/** P3-①（批次二反方遗留）：信封同名键入口剥离——payload 携带的信封键/redacted 键在脱敏前剥除，
+ * 防 TraceRecorder `{...envelope, ...redactedPayload}` 展开时载荷覆写信封（信封字段唯一属主 = TraceRecorder）。
+ * 注意：bindingSnapshot 是合法 task_started 载荷键——属排除表（零改写）而非剥离集。 */
+const STRIP_AT_ENTRY = new Set([...ENVELOPE_KEYS, 'redacted']);
 
 /** 默认规则集（A6 §8）：① 密钥格式正则（复用 T3 扫描清单同一载体）② email */
 export function defaultRedactionPolicy(): RedactionPolicy {
@@ -44,6 +52,10 @@ export interface RedactionResult {
  * 返回改写后的载荷 + redacted 摘要（不含原文——「脱敏了什么」可审计，「被脱敏内容」不可恢复）。
  */
 export function redactEventPayload(payload: Record<string, unknown>, policy: RedactionPolicy): RedactionResult {
+  const stripped: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (!STRIP_AT_ENTRY.has(k)) stripped[k] = v; // P3-①：信封同名键/redacted 键剥离（不进载荷、不进摘要）
+  }
   const compiled = policy.rules.map((r) => {
     try {
       return { ruleId: r.ruleId, re: new RegExp(r.pattern, 'g') };
@@ -52,7 +64,7 @@ export function redactEventPayload(payload: Record<string, unknown>, policy: Red
     }
   }).filter((x): x is { ruleId: string; re: RegExp } => x !== null);
   const counts = new Map<string, number>();
-  const out = walk(payload, compiled, counts, false) as Record<string, unknown>;
+  const out = walk(stripped, compiled, counts, false) as Record<string, unknown>;
   const redacted = [...counts.entries()].filter(([, n]) => n > 0).map(([ruleId, count]) => ({ ruleId, count }));
   return { payload: out, redacted };
 }

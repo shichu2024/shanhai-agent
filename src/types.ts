@@ -102,7 +102,10 @@ export type TraceEventType =
   | 'approval_requested' // v1.1：L3 挂起（requestId/toolId/riskLevel/timeoutAt/callRef）
   | 'approval_decided' // v1.1：approve/deny/惰性超时/superseded
   | 'task_paused' // v1.1：Running→Paused（run 进程退出前）
-  | 'task_resumed'; // v1.1：--resume 进程内 Paused→Running（resumedBy 双值均真实可达）
+  | 'task_resumed' // v1.1：--resume 进程内 Paused→Running（resumedBy 双值均真实可达）
+  | 'memory_written' // v1.1（D-13）：任务成功输出写入记忆（memoryId/taskId/kind/contentDigest）
+  | 'memory_loaded' // v1.1：注入上下文（injection=context 时；默认 off 不触发；degraded 回看清单载体）
+  | 'memory_state_changed'; // v1.1：可信度状态迁移（含基线快照同事务，D-13）
 
 // A3 §2 v1.1：cancelReason 封闭枚举（互斥，落 TaskRecord 与 task_cancelled 事件）
 export type CancelReason = 'user' | 'approval_denied' | 'approval_timeout' | 'abort' | 'superseded';

@@ -142,6 +142,40 @@ function migrate(db: Database.Database): void {
   CREATE INDEX IF NOT EXISTS idx_approval_version ON approval_request(agentVersionId); -- T2′ 表级索引
   CREATE INDEX IF NOT EXISTS idx_approval_task ON approval_request(taskId);
 
+  -- 设计 §4.4-2 v1.1（D-13）：MemoryRecord——作用域 = agentId 级（跨版本共享）；
+  -- 内容列不可变（仅状态/计数列可更新）；contentDigest 去重键（原文口径，脱敏管道前计算）
+  CREATE TABLE IF NOT EXISTS memory_record (
+    memoryId                          TEXT PRIMARY KEY,
+    agentId                           TEXT NOT NULL,
+    agentVersionId                    TEXT NOT NULL, -- 写入时绑定版本（仅溯源锚点，不限定注入作用域）
+    taskId                            TEXT NOT NULL, -- 证据回链（必填——无证据不记忆）
+    kind                              TEXT NOT NULL CHECK (kind IN ('episodic')),
+    content                           TEXT NOT NULL, -- 已过 redactionPolicy 管道（前置不可削依赖）
+    contentDigest                     TEXT NOT NULL, -- SHA-256 去重键（脱敏前按原文计算——跨任务对账/去重稳定）
+    evidenceCount                     INTEGER NOT NULL DEFAULT 0,
+    evidenceCountAtLastTransition     INTEGER NOT NULL DEFAULT 0, -- R-2：状态迁移基线快照（与状态变更同事务）
+    contradictionCount                INTEGER NOT NULL DEFAULT 0,
+    status                            TEXT NOT NULL CHECK (status IN ('candidate','active','degraded','retired')),
+    createdAt                         TEXT NOT NULL,
+    lastUpdatedAt                     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_memory_agent ON memory_record(agentId, status);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_dedup ON memory_record(agentId, contentDigest);
+
+  -- 设计 §4.5 v1.1（D-14）：EvolutionCandidate——人工确认制，系统永不自动注册/发布
+  CREATE TABLE IF NOT EXISTS evolution_candidate (
+    candidateId         TEXT PRIMARY KEY,
+    agentId             TEXT NOT NULL, -- 聚合键 = agentId（跨版本——失败模式是 Agent 级资产）
+    trigger             TEXT NOT NULL CHECK (trigger IN ('repeated_failure','capability_degradation')),
+    evidenceRefs        TEXT NOT NULL, -- JSON [{taskId, agentVersionId, subClass, occurredAt}]
+    status              TEXT NOT NULL CHECK (status IN ('open','confirmed','dismissed')),
+    proposedChange      TEXT,
+    createdAt           TEXT NOT NULL,
+    decidedAt           TEXT,
+    decidedBy           TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_evolution_agent ON evolution_candidate(agentId, status);
+
   -- A3 §5a v1.1：PauseSnapshot（审批挂起点专用最小检查点；非审计对象，离开 Paused 即删）
   CREATE TABLE IF NOT EXISTS pause_snapshot (
     taskId             TEXT PRIMARY KEY,
