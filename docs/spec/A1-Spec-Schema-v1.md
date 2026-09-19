@@ -27,7 +27,7 @@
 | `outputContract` | object | 是 | — | JSON Schema（A2 §6 子集规则约束）；含 `allowEmpty` 扩展键（01 号 §5.4） |
 | `modelPolicy` | object | 是 | — | 结构见 A2 §2；`maxModelCalls`/`maxTokens` 必填（无默认，强制显式声明） |
 | `toolPolicy` | object | 是 | — | 结构见 A2 §3 |
-| `evaluationPolicy` | object | 否 | `null` | 最小形态：`{ assertions: [{ path, op, value }]? }`，仅输出契约断言；完整评估延后第二阶段 |
+| `evaluationPolicy` | object | 否 | `null` | 最小形态：`{ assertions: [{ path, op, value }]? }`，仅输出契约断言；完整评估延后第二阶段。**第一阶段无 WP-B 消费者**（P3-3 处置：字段位保留、校验行为不实现，第二阶段激活） |
 | `memoryPolicy` | object | 否 | `{"type":"working"}` | 第一阶段仅工作记忆；其他取值注册时拒绝（防止伪声明） |
 
 **顶层禁止字段：** `evolutionPolicy`（已删除；出现即注册拒绝——防止「删除的字段又被悄悄加回来」）。
@@ -63,8 +63,8 @@
 
 | 层 | 时机 | 职责 | 失败处置 |
 |---|---|---|---|
-| **注册时校验（准入）** | `Registry.register()` | ① 元 Schema 合法性；② **引用完整性**：`toolPolicy` 声明的每个工具已在 Tool Registry 注册、风险等级一致；`modelPolicy.allowedModels` ⊆ 运行时配置的模型白名单；③ A2 子集规则校验（input/outputContract） | 拒绝注册，写 `RejectedRequest` 审计（含校验错误明细） |
-| **任务时校验（防御性重复）** | 任务创建后、入队前 | 防版本指针移动、外部篡改（快照哈希比对）、库内工具注销后的悬空引用 | TaskRecord 已落库 → `Created → Failed`（A3 审计边界一行规则） |
+| **注册时校验（准入）** | `Registry.register()` | ① 元 Schema 合法性；② **引用完整性**：`toolPolicy` 声明的每个工具已在 Tool Registry 注册（附录 A）、风险等级一致且**非 L3/L4**（D-3 裁决：L3/L4 注册即拒）；`modelPolicy.allowedModels` ⊆ 运行时配置的模型白名单；③ A2 子集规则校验（input/outputContract） | 拒绝注册，写 `RejectedRequest` 审计（含校验错误明细，**错误信息必须指名字段路径**，如 `modelPolicy.maxModelCalls: 必填缺失`、`toolPolicy.tools[2].toolId: 未注册`——D-1 附条件落地） |
+| **任务时校验（防御性重复）** | 任务创建后、入队前 | 防版本指针移动、外部篡改（快照哈希比对）、库内工具注销/等级变更后的悬空引用（Tool Registry status/riskLevel/implVersion 与快照比对）、**模型白名单漂移**（`allowedModels` ⊆ 当前运行时白名单——运行时配置可在注册后变更，P2-5 修订） | TaskRecord 已落库 → `Created → Failed: Spec(defensive_revalidation_failed)`（A3 审计边界一行规则 + §3.1 分工表） |
 
 **不变式：** 注册校验通过的 Spec 快照在任务时**必须**再次通过同一校验器；两次结果不一致即视为库或快照被篡改，按防御性失败处置并显式记录。
 
@@ -99,7 +99,7 @@
 
 ### 7.2 注册（异常）
 
-任一校验失败 → 不写入 AgentVersion → `RejectedRequest` 审计（who/when/input hash/拒因）→ 结构化错误返回。**C3-① 的实现点：** 声明未注册工具的 Spec 在此被拒。
+任一校验失败 → 不写入 AgentVersion → `RejectedRequest` 审计（who/when/input hash/拒因）→ 结构化错误返回（**错误信息指名字段路径**，D-1 附条件）。**C3-① 的实现点：** 声明未注册工具的 Spec 在此被拒；声明 L3/L4 工具亦在此被拒（D-3）。
 
 ### 7.3 改动再注册
 
@@ -110,7 +110,7 @@ Spec 文件改动 → `contentHash` 变化 → 只能走全新注册生成新 `v
 | # | 内容 | 属性 |
 |---|---|---|
 | 1 | zod → JSON Schema 转换不引入子集外的关键字 | 设计假设（WP-B 以子集校验器复核） |
-| 2 | `maxModelCalls`/`maxTokens` 不设默认值、强制显式声明 | 设计假设（防止「忘记声明 = 无限预算」；欢迎反方挑战是否应给保守默认） |
+| 2 | `maxModelCalls`/`maxTokens` 不设默认值、强制显式声明 | 已裁决落定（D-1 维持无默认）；附条件已落地：缺失时的注册拒绝错误信息指名字段路径（§4），防 fail-fast 退化成排错泥潭 |
 | 3 | SHA-256 正则化哈希在跨平台（行尾/编码）上稳定 | 待验证（WP-B 固化正则化算法后测试） |
 | 4 | mission 必填非职责可能抬高示例 Agent 编写成本 | 已知取舍（边界原则优先） |
 
