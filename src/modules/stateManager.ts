@@ -18,7 +18,8 @@ export class StateManager {
     private readonly failures: FailureRecorder,
   ) {}
 
-  /** 进程重启钩子：① 逐 task 索引对账（O(1) 水位比对）→ ② 非终态遗留 → Failed:Runtime(CrashRecovery)。幂等。 */
+  /** 进程重启钩子：① 逐 task 索引对账（O(1) 水位比对）→ ② Running 遗留 → Failed:Runtime(CrashRecovery)。幂等。
+   * A3 §6（F-1 修订）：崩溃标记扫描范围仅 Running（有执行副作用的中间态）；Queued 不迁移。 */
   recover(): RecoveryReport {
     const report: RecoveryReport = { reconciledTasks: [], crashMarkedTasks: [] };
 
@@ -56,9 +57,10 @@ export class StateManager {
       }
     }
 
-    // ② 崩溃标记：Queued/Running 遗留 → Failed:Runtime(CrashRecovery)；二次重启不再改写（幂等）
+    // ② 崩溃标记：仅 Running 遗留 → Failed:Runtime(CrashRecovery)（A3 §6 F-1 修订：Queued 为持久化待执行、
+    //    无执行副作用，不迁移——保持可被后续 task run 进程取出执行）；二次重启不再改写（幂等）
     const leftovers = this.db
-      .prepare(`SELECT taskId, agentId, agentVersionId, specContentHash, status FROM task_record WHERE status IN ('queued','running')`)
+      .prepare(`SELECT taskId, agentId, agentVersionId, specContentHash, status FROM task_record WHERE status = 'running'`)
       .all() as { taskId: string; agentId: string; agentVersionId: string; specContentHash: string; status: string }[];
     for (const t of leftovers) {
       const base = { taskId: t.taskId, agentId: t.agentId, agentVersionId: t.agentVersionId, specContentHash: t.specContentHash };
@@ -68,7 +70,7 @@ export class StateManager {
       const recordId = this.failures.record({
         taskId: t.taskId, agentId: t.agentId, agentVersionId: t.agentVersionId,
         attemptNo: 0, failureClass: 'Runtime', subClass: 'CrashRecovery',
-        message: `重启发现非终态遗留（lastKnownStatus=${t.status}），不做断点续跑（A3 §6）`,
+        message: `重启发现 Running 遗留（lastKnownStatus=${t.status}），不做断点续跑（A3 §6，Queued 不迁移）`,
         expectedVsActual: { expected: '终态或无记录', actual: t.status }, traceRef: marked.eventId,
       });
       this.db

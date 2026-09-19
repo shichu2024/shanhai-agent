@@ -14,7 +14,7 @@ npm install
 npm run build
 cp config.example.json config.local.json   # 按需修改 baseUrl / 模型白名单
 export SHANHAI_ANTHROPIC_AUTH_TOKEN=<你的密钥>   # T3：密钥仅环境变量注入，仓库只留占位
-npm test                                    # 50 项测试（C3/T1/T2/崩溃恢复等断言）
+npm test                                    # 54 项测试（C3/T1/T2/崩溃恢复/F-1 两进程等断言）
 ```
 
 ## CLI（A5 §2 命令表）

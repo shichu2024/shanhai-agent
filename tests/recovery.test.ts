@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { makeHarness, sampleSpec, registerAndRelease, validInput, validOutput, validationDepsOf } from './helpers.js';
 import { Runtime } from '../src/runtime.js';
+import { MockProvider } from '../src/providers/mock.js';
 import type Database from 'better-sqlite3';
 
 const validJson = JSON.stringify(validOutput());
@@ -11,7 +12,7 @@ function dbOf(rt: Runtime): Database.Database {
 }
 
 describe('A3 §6 崩溃恢复 + A6 §6.1 索引对账', () => {
-  it('重启发现 Queued/Running 遗留 → Failed:Runtime(CrashRecovery)，补写 FailureRecord + Trace', () => {
+  it('重启发现 Running 遗留 → Failed:Runtime(CrashRecovery)，补写 FailureRecord + Trace', () => {
     const { rt, dataDir } = makeHarness();
     registerAndRelease(rt, sampleSpec({ agentId: 'crash-a' }));
     const taskId = rt.tasks.createTask('crash-a', validInput, 't');
@@ -36,6 +37,29 @@ describe('A3 §6 崩溃恢复 + A6 §6.1 索引对账', () => {
     // 幂等：二次重启不再改写已终态记录
     const report2 = rt2.startup('restart2');
     expect(report2.crashMarkedTasks).toEqual([]);
+    rt2.close();
+  });
+
+  it('F-1：Queued 遗留重启不迁移（A3 §6 收窄口径），可由后续进程 Queued→Running 正常执行至 Succeeded', async () => {
+    // 进程 A（create）：仅创建任务，Queued 落库后退出
+    const { rt, dataDir } = makeHarness();
+    registerAndRelease(rt, sampleSpec({ agentId: 'f1-a' }));
+    const taskId = rt.tasks.createTask('f1-a', validInput, 't');
+    expect(rt.tasks.getTask(taskId).status).toBe('queued');
+    rt.close();
+
+    // 进程 B（run）：启动恢复扫描不得触碰 Queued；随后取出执行 → Succeeded
+    const rt2 = Runtime.withProvider(
+      new MockProvider([{ kind: 'text', text: validJson }]),
+      ['mock-model'], dataDir, process.cwd(),
+    );
+    const report = rt2.startup('run-process');
+    expect(report.crashMarkedTasks).toEqual([]); // F-1 核心：Queued 不被误判为 CrashRecovery
+    expect(rt2.tasks.getTask(taskId).status).toBe('queued');
+    const row = await rt2.tasks.runTask(taskId);
+    expect(row.status).toBe('succeeded');
+    const events = rt2.trace.readEvents(taskId).map((e) => e.eventType);
+    expect(events).not.toContain('crash_recovery_marked');
     rt2.close();
   });
 
@@ -100,9 +124,12 @@ describe('T3 发布安全', () => {
     const fakeSecret = ['sk-ant-api', '03-xxxxxxxxxx', 'xxxxxxxxxxxxxx'].join('');
     wf(path.join(dir, 'leak.js'), `const k = "${fakeSecret}";\n`);
     wf(path.join(dir, 'model.gguf'), 'binary');
+    // F-4：魔数检查——权重文件改名（无权重扩展名）后仍须命中
+    wf(path.join(dir, 'renamed-weight.dat'), Buffer.from([0x47, 0x47, 0x55, 0x46, 0x00, 0x01, 0x02, 0x03]));
     const findings = scanForRelease(dir);
     expect(findings.some((f) => f.kind === 'secret')).toBe(true);
     expect(findings.some((f) => f.kind === 'model_weight')).toBe(true);
+    expect(findings.some((f) => f.kind === 'model_weight' && f.file === 'renamed-weight.dat')).toBe(true);
     const clean = mkdtempSync(path.join(tmpdir(), 'scan-clean-'));
     wf(path.join(clean, 'ok.ts'), 'export const x = 1;\n');
     expect(scanForRelease(clean)).toEqual([]);

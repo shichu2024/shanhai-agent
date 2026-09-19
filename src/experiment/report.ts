@@ -3,7 +3,9 @@ import type { TraceEnvelope } from '../modules/traceRecorder.js';
 
 // 假设 #4 实验报告聚合（A4 §4 C2 口径）：
 // 分母 = 全部尝试样本 −（provider_infra + provider_rejected_schema + 判例排除）；成功样本在分母内；
+//   排除按「样本（任务）」计数：任务含 ≥1 条排除类 attempt 即整样本排除、计 1（TASK-40 F-3：单位统一，不按 attempt 累计）；
 // 分子 = attempt 1 即契约通过的样本数（首次通过率主指标）；
+// 成本代理 = 已发起模型调用数（含失败 attempt，A2 §7 已发起口径；TASK-40 F-2 修正）；
 // Wilson 95% CI；按 Spec 分层（S1/S2/S3 禁止只报合计）；失败分布按 subClass 直方。
 
 const CONTRACT_SUBCLASSES = new Set(['unparseable_output', 'schema_violation', 'enum_violation', 'format_violation', 'truncation']);
@@ -69,20 +71,22 @@ export function generateReport(input: ReportInput): string {
         continue;
       }
       const events = rt.trace.readEvents(j.taskId);
-      const modelAttempts = events.filter((e) => e.eventType === 'model_call_completed').length;
+      // F-2：成本代理按已发起口径（A2 §7）——attempt_started 即计 1，失败 attempt 不漏计
+      const modelAttempts = events.filter((e) => e.eventType === 'attempt_started' && e.callKind === 'model').length;
       attemptSum += Math.max(1, modelAttempts);
       const modelAttemptFailures = events.filter((e) => e.eventType === 'attempt_failed' && e.callKind === 'model');
       const succeeded = events.some((e) => e.eventType === 'task_succeeded');
       if (succeeded && modelAttemptFailures.length === 0) s.firstPass += 1;
       if (succeeded) s.withRetryPass += 1;
+      // F-3：排除按样本级计数（与分母/分子同单位）——含排除类 attempt 的任务整样本排除、计 1
+      if (modelAttemptFailures.some((f) => f.subClass === 'provider_rejected_schema')) {
+        s.excludedProviderRejectedSchema += 1;
+      } else if (modelAttemptFailures.some((f) => f.subClass === 'provider_infra')) {
+        s.excludedInfra += 1;
+      }
       for (const f of modelAttemptFailures as (TraceEnvelope & { subClass: string })[]) {
-        if (f.subClass === 'provider_infra') {
-          s.excludedInfra += 1;
-          continue;
-        }
-        if (f.subClass === 'provider_rejected_schema') {
-          s.excludedProviderRejectedSchema += 1;
-          continue;
+        if (f.subClass === 'provider_infra' || f.subClass === 'provider_rejected_schema') {
+          continue; // 排除类不进失败直方（排除计数已在样本级单列）
         }
         s.failureHist[f.subClass] = (s.failureHist[f.subClass] ?? 0) + 1;
         // 仅契约子类计入「Provider 通过但本地校验失败」（call_timeout 等非语义不一致样本不计）
@@ -103,7 +107,7 @@ export function generateReport(input: ReportInput): string {
   lines.push(`- **策略：** A = 原生 structured output（强制工具 emit_output）；B = 纯 Prompt 声明 Schema + 解析校验`);
   lines.push(`- **重试预算：** 首次（主指标）+ ≤2 次重试（maxAttempts=3，05 号裁定）`);
   lines.push(`- **数据通道：** TraceRecorder 标准通道（实验数据 = Trace 数据，11 号 §2.2）`);
-  lines.push(`- **口径：** 分母 = 全部尝试样本 −（provider_infra + provider_rejected_schema + 判例排除）；分子 = attempt 1 即契约通过（A4 §4）`);
+  lines.push(`- **口径：** 分母 = 全部尝试样本 −（provider_infra + provider_rejected_schema + 判例排除，排除按样本计）；分子 = attempt 1 即契约通过（A4 §4）；成本代理 = 已发起模型调用（含失败 attempt，A2 §7）`);
   lines.push('');
 
   for (const strategy of strategies) {
@@ -156,7 +160,7 @@ export function generateReport(input: ReportInput): string {
         }
       }
       lines.push('');
-      lines.push(`排除计数：provider_infra = ${s.excludedInfra}；provider_rejected_schema = ${s.excludedProviderRejectedSchema}；执行错误 = ${s.errors}；Provider 通过但本地校验失败 = ${s.providerPassedLocalFailed}${strategy === 'A' ? '（语义不一致直接度量，ND-2 副产品）' : ''}。`);
+      lines.push(`排除计数（样本级）：provider_infra = ${s.excludedInfra}；provider_rejected_schema = ${s.excludedProviderRejectedSchema}；执行错误 = ${s.errors}；Provider 通过但本地校验失败 = ${s.providerPassedLocalFailed}${strategy === 'A' ? '（语义不一致直接度量，ND-2 副产品）' : ''}。`);
       lines.push('');
     }
   }

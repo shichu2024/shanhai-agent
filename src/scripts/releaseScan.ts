@@ -1,4 +1,4 @@
-import { readdirSync, statSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
 import path from 'node:path';
 
 // T3 发布安全扫描（A5 §4-3）：已知密钥格式正则 + 模型权重文件检查（扩展名/魔数）。
@@ -38,6 +38,7 @@ export function scanForRelease(root: string): ScanFinding[] {
   function walk(dir: string): void {
     if (!existsSync(dir)) return;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue; // 符号链接（含目录 junction）不跟随、不扫描
       if (entry.name.startsWith('.git') && entry.isDirectory()) continue;
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name)) continue;
@@ -49,6 +50,11 @@ export function scanForRelease(root: string): ScanFinding[] {
       const rel = path.relative(root, file);
       if (WEIGHT_EXTENSIONS.has(ext)) {
         findings.push({ kind: 'model_weight', file: rel, detail: `模型权重文件扩展名 ${ext}` });
+        continue;
+      }
+      // A5 §4-3 魔数检查（TASK-40 F-4 接通）：无权重扩展名的文件按首 4 字节判定，防改名绕过
+      if (hasWeightMagic(file)) {
+        findings.push({ kind: 'model_weight', file: rel, detail: '模型权重文件魔数匹配' });
         continue;
       }
       // config.example 中的占位与文档中的示例说明不视为命中（占位值不含真实密钥材料）
@@ -66,11 +72,17 @@ export function scanForRelease(root: string): ScanFinding[] {
 }
 
 function hasWeightMagic(file: string): boolean {
+  let fd: number | undefined;
   try {
-    const buf = readFileSync(file).subarray(0, 4);
+    fd = openSync(file, 'r');
+    const buf = Buffer.alloc(4);
+    const bytesRead = readSync(fd, buf, 0, 4, 0);
+    if (bytesRead < 4) return false;
     return WEIGHT_MAGICS.some((magic) => magic.length > 0 && magic.every((b, i) => buf[i] === b));
   } catch {
     return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
