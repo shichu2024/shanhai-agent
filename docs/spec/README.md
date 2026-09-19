@@ -70,6 +70,8 @@
 | P3-2 | contentHash 重复注册拒绝是否写 RejectedRequest | WP-B 实现时按「写」处理（与 C3-① 同源），A1 §7.2 已隐含 |
 | P3-3 | `evaluationPolicy` 最小形态无第一阶段消费者 | 显式标注：第二阶段激活，第一阶段无消费（Spec 字段位保留，WP-B 不实现其校验行为） |
 | P3-4 | `Agent` 指针表（currentVersionId）无字段表 | WP-B 建表时补：`agentId PK / currentVersionId FK / updatedAt` 三列 |
+| P3-5 | audit_events 载荷结构未统一 | WP-B 建表时定：以通用 `payload` JSON 列承载各类事件的差异化载荷（终审裁决顺手项） |
+| P3-6 | A2 §3 `tools[].riskLevel` 行缺 L3/L4 处置交叉引用 | WP-B 定稿校对时补：「L3/L4 声明 → 注册拒绝（§4）」一句（终审裁决顺手项） |
 
 ## 5. 特别要求清单（角色规范）
 
@@ -115,3 +117,4 @@
 |---|---|---|
 | R1 初稿 | 2026-09-19 | A0–A6 首次交付（commit a0e900f） |
 | R2 修订 | 2026-09-19 | 按反方报告 + 决策官指令：P1×5（attempt 粒度 A2§2.1、双路径分工 A3§3.1、C2 分母 A4§4、Tool Registry A2 附录 A、索引恢复程序 A6§6.1）+ P2×9 + P3×4 转处置清单 + D-1–D-7 落定（D-3 接受注册即拒） |
+| R2-1 修复 | 2026-09-19 | 终审裁决专项：A6 §2 `callNo` 改为按 `callKind` 各自独立编号（取反方方案①，与 A2 §2.1/§7 自洽）；README §4.1 追加 P3-5/P3-6 顺手项 |
