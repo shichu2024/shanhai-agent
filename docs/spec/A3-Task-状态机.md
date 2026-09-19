@@ -39,7 +39,7 @@
 | `Running → Succeeded` | 输出契约校验通过 | TaskRecord + Trace(TaskSucceeded) | — |
 | `Running → Failed` | ① attempt 耗尽；② 任务级超时；③ 预算超限；④ 连续拦截超限；⑤ 输出契约失败 | TaskRecord + FailureRecord + Trace(TaskFailed) | Model / Tool / Runtime(BudgetExceeded/TaskTimeout) / Policy(PolicyBlocked) / Output(ContractViolation) |
 | `Running → Cancelled` | 用户取消：**等待当前原子调用完成后生效** | TaskRecord + Trace(TaskCancelled) | — |
-| （恢复）`Queued/Running 遗留 → Failed` | 进程重启发现非终态遗留任务 | TaskRecord + FailureRecord + Trace | Runtime(CrashRecovery) |
+| （恢复）`Running 遗留 → Failed` | 进程重启发现 Running 遗留任务（§6；Queued 不迁移——TASK-40 F-1 修订） | TaskRecord + FailureRecord + Trace | Runtime(CrashRecovery) |
 
 ## 3. 审计边界一行规则（05 号备注-3，逐字冻结）
 
@@ -98,7 +98,17 @@
 
 ## 6. 崩溃恢复（StateManager 最小版）
 
-重启时扫描 `status ∈ {Queued, Running}` 的遗留记录 → 逐条迁移 `→ Failed`，failureClass = `Runtime(CrashRecovery)`，补写 FailureRecord + Trace。**不做断点续跑**（Checkpoint 属第二阶段）；恢复本身幂等（二次重启不再改写已终态记录）。
+> **TASK-40 F-1 修订（2026-09-19，决策官方向性裁定落稿）：** 恢复扫描范围由 `status ∈ {Queued, Running}` 收窄至**仅 Running**。原表述与文档化 CLI 分两进程工作流（`task create` 与 `task run` 各为一独立进程，README 快速开始）冲突：run 进程启动即扫描，会把尚未执行的 Queued 任务误迁移为 `Failed:Runtime(CrashRecovery)`，任务永不可经文档化工作流执行（单进程路径不暴露，故单测与实验均未发现）。
+
+**扫描范围（收窄后）：** 重启时扫描 `status = 'Running'` 的遗留记录 → 逐条迁移 `→ Failed`，failureClass = `Runtime(CrashRecovery)`，补写 FailureRecord + Trace。**不做断点续跑**（Checkpoint 属第二阶段）；恢复本身幂等（二次重启不再改写已终态记录）。
+
+**收窄判别准则：** 恢复迁移仅针对**有执行副作用的中间态**。Running 可能已有已发生的模型调用、工具执行与预算记账，不迁移会使副作用状态悬空（预算已扣、终态缺失）；Queued 尚无任何执行副作用，不存在需要恢复之物。
+
+**Queued 语义（澄清）：** Queued = 持久化的待执行（durable pending）。重启扫描**不改写** Queued 记录；任何后续 `task run` 进程（或实验 runner）按常规迁移 `Queued → Running` 取出执行。队列的崩溃安全性由不变式②（先持久化后继续）提供——`task_queued` 事件与 `status='queued'` 均已落 SQLite，无内存态队列需要重建。分两进程 create→run 因此天然成立（run 进程的启动扫描不触碰待执行任务）；CLI 同进程 create+run 复合入口为**可选补充，非修复本体**，不改变本节语义。
+
+**Queued 真丢失防护（入队进程死亡且无人执行）——最小手段边界：** 允许且仅允许**只读警示**：恢复扫描可在 RecoveryReport 单列 `staleQueuedTasks`（判定 = `createdAt` 距今超过宽限窗；宽限窗为天级量级配置项，具体默认值 WP-B 定，不进规格）。不改状态、不写 FailureRecord、不写 Trace。**禁止**引入持久租约、所有权标记、心跳/续约字段等重机制（第二阶段亦不默认引入）。理由：若将 stale Queued 迁移为终态，宽限窗判定与「即将被 `task run` 取出」存在竞争，会重新制造 F-1 类误判；第一阶段 CLI 模型下 Queued 任务的 liveness 由操作者显式负责（`task run <taskId>`），规格只保证其**可执行性**不被恢复扫描破坏。
+
+**与 A6 §6.1 的关系：** 索引对账遍历**全部** task（含 Queued 与终态），不受本次收窄影响；次序约束（索引对账先于崩溃标记）维持不变。
 
 ## 7. 边界情况
 
@@ -109,6 +119,7 @@
 | 取消请求到达时正在原子调用中 | 挂起取消标志，调用完成后迁移 Cancelled（「已 Cancelled 但副作用已发生」的状态错位不允许出现） |
 | 同一 Agent 并发多任务 | 允许（版本不可变保证一致性；无共享可变状态） |
 | 崩溃后重启又崩溃 | 幂等恢复，见 §6 |
+| CLI 分两进程 create→run（run 进程启动触发恢复扫描） | Queued 不在扫描范围（§6 收窄），任务正常执行；仅 Running 遗留被标记（TASK-40 F-1） |
 | Paused 状态被外部写入 | 第一阶段无合法写入路径；出现即库被篡改，按防御性失败处置并显式记录 |
 
 ## 8. 关键假设 / 风险 / 待验证
@@ -117,7 +128,7 @@
 |---|---|---|
 | 1 | 「等待当前原子调用完成」的取消粒度 = 单次模型调用或单次工具执行 | 设计假设（取消延迟上限 = 最长原子调用时长） |
 | 2 | SQLite 同步写保证「先持久化后继续」的崩溃一致性 | 已知事实（WAL 模式下单写者） |
-| 3 | 崩溃恢复只标记不续跑 | 已知取舍（用户裁定范围；长任务第二阶段） |
+| 3 | 崩溃恢复只标记不续跑；扫描范围 = 仅 Running 遗留 | 已知取舍（用户裁定范围；长任务第二阶段）+ 已裁决落定（TASK-40 F-1，2026-09-19） |
 | 4 | ApprovalRequest 8 字段（第 8 字段 = agentVersionId） | 已裁决落定（D-4），不再是开放点 |
 
 ## 9. WP-B 实现输入映射
