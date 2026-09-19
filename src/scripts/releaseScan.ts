@@ -4,7 +4,7 @@ import path from 'node:path';
 // T3 发布安全扫描（A5 §4-3）：已知密钥格式正则 + 模型权重文件检查（扩展名/魔数）。
 // 零命中方为通过；命中即拒绝发布（退出码 1）。与开源前置待办（定稿 §11-2）复用同一实现。
 
-const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
+export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
   { name: 'OpenAI sk- 密钥', re: /sk-[A-Za-z0-9_-]{20,}/ },
   { name: 'Anthropic sk-ant- 密钥', re: /sk-ant-[A-Za-z0-9_-]{20,}/ },
   { name: 'AWS AKIA 访问键', re: /AKIA[0-9A-Z]{16}/ },

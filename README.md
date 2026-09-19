@@ -14,7 +14,7 @@ npm install
 npm run build
 cp config.example.json config.local.json   # 按需修改 baseUrl / 模型白名单
 export SHANHAI_ANTHROPIC_AUTH_TOKEN=<你的密钥>   # T3：密钥仅环境变量注入，仓库只留占位
-npm test                                    # 82 项测试（第一阶段 54 存量零回退 + 批次一 28 新增：审批流/Reviewed/abort/迁移）
+npm test                                    # 112 项测试（54 第一阶段存量 + 批次一 34 + 批次二 24：脱敏/灰度/report/迁移）
 ```
 
 ## CLI（A5 §2 命令表）
@@ -47,6 +47,20 @@ npm run cli -- agent release <a> <v> --no-pointer  # 发布不移指针（canary
 npm run cli -- task cancel <taskId> --force        # 本进程立即 / 跨进程登记 abortRequested
 
 npm run cli -- query t2p <versionId>               # T2′：版本 → 全部 L3 审批请求及裁决（审批可举证）
+```
+
+## CLI · 第二阶段批次二（数据与发布治理）
+
+```bash
+# Trace 脱敏（A6 §8，D-11）：写入时脱敏、原文不落盘；redactionPolicy 为运行时配置（config.local.json 可选段，缺省 = 默认规则集）
+#   排除表（信封/bindingSnapshot/*Digest）零改写；digest 脱敏前按原文计算（跨任务对账稳定）；命中留痕 redacted 摘要
+
+# 灰度发布（A5 §3a/§4a，D-12）：release --no-pointer → canary set → report 判据 → promote
+npm run cli -- agent canary set <agentId> <versionId> --weight N   # 目标须 Released 且 ≠ current
+npm run cli -- agent canary clear <agentId>                        # 灰度归零（回退，立即审计）
+npm run cli -- agent promote <agentId>                             # canary→current + 清零（判据为建议，决定权留人）
+npm run cli -- agent report <agentId> [--since <RFC3339>]          # 分组通过率 + promote 判据（insufficient-sample 显式）
+                                                                   #   旁挂三单列：审批超时计数 / 受工具升级影响的 Spec(R-5) / stale 汇总
 ```
 
 ## 模块地图（src/）

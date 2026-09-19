@@ -10,6 +10,7 @@ import { ApprovalManager } from './modules/approval.js';
 import { BUILTIN_TOOL_DEFS, BUILTIN_TOOL_VERSION, createBuiltinImpls } from './tools/builtin.js';
 import type { ModelProvider } from './providers/types.js';
 import { loadRuntimeConfig, buildProviderFromConfig, modelWhitelistOf } from './config.js';
+import { defaultRedactionPolicy, type RedactionPolicy } from './modules/redaction.js';
 
 // 模块化单体组合根（WP-B 八模块：Registry / SpecValidator / ToolExecutor / TaskManager /
 // ModelGateway / StateManager / TraceRecorder / FailureRecorder）
@@ -20,6 +21,10 @@ export interface RuntimeOptions {
   repoRoot: string;
   provider: ModelProvider;
   whitelist: ReadonlySet<string>;
+  /** v1.1（A6 §8，D-11）：运行时配置（平台层）；缺省 = 默认规则集（管道不可削） */
+  redaction?: RedactionPolicy;
+  /** v1.1（A5 §4a）：灰度分派随机源（测试注入确定性；缺省 = 随机） */
+  dispatchRoll?: () => number;
 }
 
 export class Runtime {
@@ -37,7 +42,7 @@ export class Runtime {
   constructor(opts: RuntimeOptions) {
     const handles = openDatabase(opts.dataDir);
     this.tracesDir = handles.tracesDir;
-    this.trace = new TraceRecorder(handles.db, handles.tracesDir);
+    this.trace = new TraceRecorder(handles.db, handles.tracesDir, opts.redaction ?? defaultRedactionPolicy());
     this.failures = new FailureRecorder(handles.db);
     this.audit = new AuditRecorder(handles.db);
     this.registry = new Registry(handles.db);
@@ -60,6 +65,7 @@ export class Runtime {
       toolImpls: this.toolImpls,
       audit: this.audit,
       approvals: this.approvals,
+      dispatchRoll: opts.dispatchRoll,
     });
     Object.defineProperty(this, 'db', { value: handles.db });
   }
@@ -72,12 +78,20 @@ export class Runtime {
       repoRoot,
       provider: buildProviderFromConfig(config),
       whitelist: modelWhitelistOf(config),
+      redaction: config.redaction,
     });
   }
 
-  /** 测试构造：注入 Provider 与白名单 */
-  static withProvider(provider: ModelProvider, whitelist: Iterable<string>, dataDir: string, repoRoot: string): Runtime {
-    return new Runtime({ dataDir, repoRoot, provider, whitelist: new Set(whitelist) });
+  /** 测试构造：注入 Provider 与白名单（redaction/dispatchRoll 可选注入；redaction 缺省 = 默认规则集——即脱敏开启库） */
+  static withProvider(
+    provider: ModelProvider,
+    whitelist: Iterable<string>,
+    dataDir: string,
+    repoRoot: string,
+    redaction?: RedactionPolicy,
+    dispatchRoll?: () => number,
+  ): Runtime {
+    return new Runtime({ dataDir, repoRoot, provider, whitelist: new Set(whitelist), redaction, dispatchRoll });
   }
 
   /** 启动：内置工具登记 + 崩溃恢复（索引对账先于崩溃标记，A6 §6.1 次序约束） */

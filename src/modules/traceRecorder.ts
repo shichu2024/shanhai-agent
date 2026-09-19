@@ -3,9 +3,12 @@ import path from 'node:path';
 import { uuid } from '../hash.js';
 import type { CallKind, TraceEventType } from '../types.js';
 import type Database from 'better-sqlite3';
+import { defaultRedactionPolicy, redactEventPayload, type RedactionPolicy } from './redaction.js';
 
 // A6 §2–§3：Trace 事件公共信封 + per-task JSONL；D-6 双写次序 = 先文件后索引。
 // callNo 按 callKind 各自独立编号（A6 §2 / R2-1）；任务级事件 callNo=0 / callKind=null / attemptNo=0。
+// A6 §8 v1.1（D-11）：写入时脱敏——原文不落盘；digest 由调用方在脱敏前按原文计算（跨任务对账稳定）；
+// 排除表（信封/bindingSnapshot/*Digest）零改写；管道不可削（空规则集仍过管道，规则集内容可裁）。
 
 export interface TraceEnvelope {
   eventId: string;
@@ -38,10 +41,12 @@ interface EnvelopeBase {
 export class TraceRecorder {
   private readonly db: Database.Database;
   private readonly tracesDir: string;
+  private readonly redaction: RedactionPolicy;
 
-  constructor(db: Database.Database, tracesDir: string) {
+  constructor(db: Database.Database, tracesDir: string, redaction: RedactionPolicy = defaultRedactionPolicy()) {
     this.db = db;
     this.tracesDir = tracesDir;
+    this.redaction = redaction;
   }
 
   traceFile(taskId: string): string {
@@ -73,6 +78,9 @@ export class TraceRecorder {
     attemptNo: number,
     payload: Record<string, unknown>,
   ): TraceEnvelope {
+    // A6 §8：写入时脱敏（仅自由文本载荷；排除表键零改写）；留痕摘要不含原文。
+    // digest 类字段（outputDigest/argsDigest/resultDigest…）由调用方按原文预先计算——排除表保证不被改写。
+    const { payload: redactedPayload, redacted } = redactEventPayload(payload, this.redaction);
     const event: TraceEnvelope = {
       eventId: uuid(),
       timestamp: nowNs(),
@@ -85,7 +93,8 @@ export class TraceRecorder {
       callNo,
       callKind,
       attemptNo,
-      ...payload,
+      ...redactedPayload,
+      ...(redacted.length > 0 ? { redacted } : {}),
     };
     // D-6：先 JSONL（追加 + flush）成功，后 trace_index
     appendFileSync(this.traceFile(base.taskId), JSON.stringify(event) + '\n', 'utf8');

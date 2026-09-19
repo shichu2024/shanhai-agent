@@ -8,6 +8,7 @@ import { queryT1, queryT2, queryT2Prime } from './evidence.js';
 import { RegistrationError, REVIEW_ITEMS } from './modules/registry.js';
 import { TaskCreationRejected } from './modules/taskManager.js';
 import { ApprovalError } from './modules/approval.js';
+import { buildAgentReport } from './modules/report.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
 
@@ -23,6 +24,10 @@ function usage(): never {
   shanhai agent review <agentId> <versionId> [--by <who>]          （Draft→Reviewed，diff 检视清单逐项确认）
   shanhai agent deprecate <agentId> <versionId> [--by <who>]
   shanhai agent rollback <agentId> <versionId> [--by <who>]
+  shanhai agent canary set <agentId> <versionId> --weight N   （灰度目标须 Released 且 ≠ current）
+  shanhai agent canary clear <agentId>
+  shanhai agent promote <agentId>                              （canary→current + 清零；判据为建议，决定权留人）
+  shanhai agent report <agentId> [--since <RFC3339>]          （分组通过率 + promote 判据 + 旁挂三单列）
   shanhai agent list <agentId>
   shanhai agent show <agentId> [<versionId>]
   shanhai task create <agentId> <input.json> [--by <who>] [--draft|--reviewed]
@@ -84,6 +89,30 @@ async function main(): Promise<void> {
         if (!agentId || !versionId) usage();
         rt.registry[sub](agentId, versionId, by);
         console.log(JSON.stringify({ ok: true, agentId, versionId, op: sub }, null, 2));
+      } else if (sub === 'canary') {
+        const op = pos[0];
+        if (op === 'set') {
+          const [agentId, versionId] = pos.slice(1);
+          const weight = Number(flagValue(rest, '--weight'));
+          if (!agentId || !versionId || !Number.isInteger(weight)) usage();
+          rt.registry.canarySet(agentId, versionId, weight, by);
+          console.log(JSON.stringify({ ok: true, agentId, versionId, weight, op: 'canary-set' }, null, 2));
+        } else if (op === 'clear') {
+          const [agentId] = pos.slice(1);
+          if (!agentId) usage();
+          rt.registry.canaryClear(agentId, by);
+          console.log(JSON.stringify({ ok: true, agentId, op: 'canary-clear', canary: rt.registry.getCanary(agentId) }, null, 2));
+        } else usage();
+      } else if (sub === 'promote') {
+        const [agentId] = pos;
+        if (!agentId) usage();
+        const versionId = rt.registry.promote(agentId, by);
+        console.log(JSON.stringify({ ok: true, agentId, versionId, op: 'promote', canary: rt.registry.getCanary(agentId) }, null, 2));
+      } else if (sub === 'report') {
+        const [agentId] = pos;
+        if (!agentId) usage();
+        const report = buildAgentReport((rt as unknown as { db: import('better-sqlite3').Database }).db, agentId, { since: flagValue(rest, '--since') ?? undefined });
+        console.log(JSON.stringify(report, null, 2));
       } else if (sub === 'list') {
         const [agentId] = pos;
         if (!agentId) usage();

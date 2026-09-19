@@ -40,6 +40,7 @@ export interface TaskRow {
   abortRequested: number;
   pausedDurationMs: number;
   cancelReason: string | null;
+  assignmentSource: string | null;
 }
 
 export class TaskCreationRejected extends Error {
@@ -114,6 +115,8 @@ export interface TaskManagerDeps {
   toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
   audit: AuditRecorder;
   approvals: ApprovalManager;
+  /** v1.1（A5 §4a）：灰度分派随机源（0-99 整数；测试注入确定性，缺省 = 随机） */
+  dispatchRoll?: () => number;
 }
 
 interface RunningCancelCtl {
@@ -141,7 +144,21 @@ export class TaskManager {
 
     // ② 落库前：Spec 存在性与状态（指针指向 Released 版本；agentVersionId 不可解析时为 NULL——A6 §4）
     // v1.1（A5 §1）：Reviewed 可显式 --reviewed 测试运行（不进正式队列语义）；直发/Released 行为不变
-    const pointer = registry.getPointer(agentId);
+    // v1.1（A5 §4a，D-12）：canaryWeight>0 时按概率分派 stable/canary 双指针 → agentVersionId 创建时一次性固化
+    const stablePointer = registry.getPointer(agentId);
+    const canary = registry.getCanary(agentId);
+    const canaryActive = canary.canaryVersionId !== null && canary.canaryWeight > 0;
+    const roll = deps.dispatchRoll ?? (() => Math.floor(Math.random() * 100));
+    let pointer = stablePointer;
+    let assignmentSource: 'stable' | 'canary' | 'explicit' = 'stable';
+    if (canaryActive && stablePointer !== null && roll() < canary.canaryWeight) {
+      pointer = canary.canaryVersionId;
+      assignmentSource = 'canary';
+    }
+    if ((opts.allowDraft || opts.allowReviewed) && stablePointer !== null) {
+      pointer = stablePointer; // 显式测试运行不参与灰度分派
+      assignmentSource = 'explicit';
+    }
     const version = pointer ? registry.getVersion(pointer) : null;
     const resolvable = version !== null && version.status === 'released';
     const draftable = opts.allowDraft === true && version !== null && version.status === 'draft';
@@ -171,17 +188,20 @@ export class TaskManager {
       throw new TaskCreationRejected('输入不符 Input Contract（落库前拒绝，A3 §3.1-①）', issues);
     }
 
-    // TaskRecord 落库（审计边界锚点）
+    // TaskRecord 落库（审计边界锚点；assignmentSource 固化——此后指针移动不影响已创建任务）
     const taskId = uuid();
     const base = { taskId, agentId, agentVersionId: version.versionId, specContentHash: version.contentHash };
     db.prepare(
-      `INSERT INTO task_record (taskId, agentId, agentVersionId, specContentHash, input, status, createdAt, traceFile)
-       VALUES (?,?,?,?,?,'created',?,?)`,
-    ).run(taskId, agentId, version.versionId, version.contentHash, JSON.stringify(input ?? null), nowNs(), trace.traceFile(taskId));
+      `INSERT INTO task_record (taskId, agentId, agentVersionId, specContentHash, input, status, createdAt, traceFile, assignmentSource)
+       VALUES (?,?,?,?,?,'created',?,?,?)`,
+    ).run(taskId, agentId, version.versionId, version.contentHash, JSON.stringify(input ?? null), nowNs(), trace.traceFile(taskId), assignmentSource);
     trace.recordTaskEvent(base, 'task_created', {
       inputHash: sha256Hex(JSON.stringify(input ?? null)),
       input: input ?? null,
       inputContractHash: sha256Hex(JSON.stringify(spec.inputContract)),
+      // A5 §4a：分派留痕——灰度期间任一任务可回溯「为什么进了金丝雀」
+      assignmentSource,
+      dispatchSnapshot: { stableVersionId: stablePointer, canaryVersionId: canary.canaryVersionId, canaryWeight: canary.canaryWeight },
     });
 
     // ③ 落库后防御性复验：Input Contract 同一校验器复跑（漂移窗口捕获，仅经此路径可达 Input(contract_mismatch)）

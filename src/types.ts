@@ -112,13 +112,15 @@ export type CallKind = 'model' | 'tool';
 // 审计流 RejectedRequest kind（A6 §4）
 export type RejectedKind = 'spec_registration' | 'task_creation' | 'cli_operation';
 
-// A5 §5 审计流版本事件（v1.1 增 version_reviewed）
+// A5 §5 审计流版本事件（v1.1 增 version_reviewed / canary_configured / version_promoted）
 export type AuditEventType =
   | 'version_registered'
   | 'version_released'
   | 'version_reviewed' // v1.1：Draft→Reviewed 检视门（载荷含检视清单，A5 §1）
   | 'version_deprecated'
   | 'version_rollback'
+  | 'canary_configured' // v1.1（A5 §3a，D-12）：canary set/clear 审计
+  | 'version_promoted' // v1.1（A5 §4a，D-12）：canary→current 晋升（决定权留人）
   | 'tool_registered'
   | 'tool_reregistered'
   | 'rejected_request';
