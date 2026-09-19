@@ -2,3 +2,23 @@
 .dsh/
 .multica/
 AGENTS.md
+CLAUDE.md
+description.md
+.claude/
+
+node_modules/
+dist/
+
+# T3 发布安全：本地配置与密钥不入库
+.env
+config.local.json
+
+# 运行时数据
+data/
+traces/
+*.db
+*.db-wal
+*.db-shm
+
+# 实验本地运行产物
+experiment-runs/

@@ -1,0 +1,73 @@
+{
+  "specVersion": "1",
+  "identity": {
+    "agentId": "hyp4-s3-decision-report",
+    "name": "假设4-S3 高复杂度决策报告",
+    "description": "含自由文本字段 + 结构化结论字段 + 引用列表的混合契约——假设 #4 实验制品，冻结于启动前 Git 哈希",
+    "author": "WP-B"
+  },
+  "mission": {
+    "responsibilities": ["基于输入情景产出混合结构决策报告"],
+    "nonResponsibilities": ["给出超出输入信息支撑范围的确定性结论"]
+  },
+  "inputContract": {
+    "type": "object",
+    "properties": {
+      "scenario": { "type": "string", "minLength": 80, "maxLength": 3000, "description": "决策情景描述" },
+      "decisionQuestion": { "type": "string", "minLength": 10, "maxLength": 200 }
+    },
+    "required": ["scenario", "decisionQuestion"],
+    "additionalProperties": false
+  },
+  "outputContract": {
+    "type": "object",
+    "properties": {
+      "executiveSummary": { "type": "string", "minLength": 50, "maxLength": 500 },
+      "conclusion": { "type": "string", "enum": ["proceed", "proceed-with-conditions", "hold", "reject"] },
+      "confidence": { "type": "integer", "minimum": 0, "maximum": 100 },
+      "risks": {
+        "type": "array", "minItems": 1, "maxItems": 5,
+        "items": {
+          "type": "object",
+          "properties": {
+            "description": { "type": "string", "minLength": 10, "maxLength": 200 },
+            "severity": { "type": "string", "enum": ["low", "medium", "high"] },
+            "mitigation": { "type": "string", "minLength": 5, "maxLength": 200 }
+          },
+          "required": ["description", "severity", "mitigation"],
+          "additionalProperties": false
+        }
+      },
+      "citations": {
+        "type": "array", "minItems": 1, "maxItems": 5,
+        "items": {
+          "type": "object",
+          "properties": {
+            "claim": { "type": "string", "minLength": 5, "maxLength": 200 },
+            "source": { "type": "string", "minLength": 5, "maxLength": 120 }
+          },
+          "required": ["claim", "source"],
+          "additionalProperties": false
+        }
+      },
+      "recommendedAction": { "type": "string", "enum": ["immediate-rollout", "pilot-first", "re-scope", "abandon"] },
+      "openQuestions": {
+        "type": "array", "minItems": 0, "maxItems": 5,
+        "items": { "type": "string", "minLength": 5, "maxLength": 160 }
+      },
+      "reviewDate": { "type": "string", "format": "date", "minLength": 10, "maxLength": 10 }
+    },
+    "required": ["executiveSummary", "conclusion", "confidence", "risks", "citations", "recommendedAction", "openQuestions", "reviewDate"],
+    "additionalProperties": false
+  },
+  "modelPolicy": {
+    "allowedModels": ["__EXPERIMENT_MODEL__"],
+    "maxModelCalls": 12,
+    "maxTokens": 300000,
+    "maxAttempts": 3,
+    "callTimeoutMs": 90000
+  },
+  "toolPolicy": {
+    "tools": [{ "toolId": "docs-list", "riskLevel": "L0" }]
+  }
+}
