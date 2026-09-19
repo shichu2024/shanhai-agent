@@ -58,7 +58,18 @@ const metaSchema = z
       })
       .optional()
       .nullable(),
-    memoryPolicy: z.object({ type: z.literal('working') }).optional(),
+    memoryPolicy: z // v1.1（A1 §2.1，D-13）：working（V1 行为，缺省）或 persistent；其他取值注册拒绝（防伪声明）
+      .union([
+        z.object({ type: z.literal('working') }),
+        z.object({
+          type: z.literal('persistent'),
+          writePolicy: z.literal('task_output').optional(), // 唯一合法值（写入源限定契约通过的 final output）
+          maxEntriesPerTask: z.number().int().min(1).optional(),
+          retentionDays: z.number().int().min(1).optional(),
+          injection: z.enum(['off', 'context']).optional(), // 终审冻结：默认 off（只写不注入，攻击面最小默认配置）
+        }),
+      ])
+      .optional(),
     approvalPolicy: z // v1.1 增补（A1 §2.2，D-8/D-9/D-18）：缺省 = 无审批路径（V1 行为不变）
       .object({
         mode: z.enum(['never', 'onHighRisk'], { errorMap: () => ({ message: 'approvalPolicy.mode 仅为 never/onHighRisk（always 注册拒绝，防伪声明——D-9）' }) }),
@@ -67,8 +78,21 @@ const metaSchema = z
       })
       .optional()
       .nullable(),
+    evolutionPolicy: z // v1.1 解禁（A1 §2.3，D-14；V1 禁止条款废止）：缺省 null 等价 allowed:false
+      .object({
+        allowed: z.boolean(),
+        triggers: z.array(z.enum(['repeated_failure', 'capability_degradation'])).optional(),
+        failureThreshold: z.number().int().min(1).optional(),
+        guardrails: z
+          .object({
+            requireReviewed: z.literal(true, { errorMap: () => ({ message: 'guardrails.requireReviewed 强制 true（D-14：变更面受控不可关闭）' }) }),
+          })
+          .optional(),
+      })
+      .optional()
+      .nullable(),
   })
-  .strict(); // 顶层封闭：evolutionPolicy 等未声明字段出现即拒绝（A1 §2 顶层禁止字段）
+  .strict(); // 顶层封闭（v1.1：evolutionPolicy 已解禁为受约束可选字段；其余未声明字段出现即拒绝）
 
 export interface ToolRegistryEntryView {
   toolId: string;
@@ -101,9 +125,7 @@ export function validateRegistration(spec: unknown, deps: ValidationDeps): Regis
     return { ok: false, issues: [{ path: '$', message: 'Spec 必须为 JSON 对象' }] };
   }
   const raw = spec as Record<string, unknown>;
-  if ('evolutionPolicy' in raw) {
-    issues.push({ path: 'evolutionPolicy', message: '顶层禁止字段（Q5-3 已删除；出现即注册拒绝）' });
-  }
+  void raw;
 
   const parsed = metaSchema.safeParse(spec);
   if (!parsed.success) {

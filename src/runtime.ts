@@ -7,6 +7,8 @@ import { StateManager } from './modules/stateManager.js';
 import { ModelGateway } from './modules/modelGateway.js';
 import { TaskManager } from './modules/taskManager.js';
 import { ApprovalManager } from './modules/approval.js';
+import { MemoryManager } from './modules/memory.js';
+import { EvolutionManager } from './modules/evolution.js';
 import { BUILTIN_TOOL_DEFS, BUILTIN_TOOL_VERSION, createBuiltinImpls } from './tools/builtin.js';
 import type { ModelProvider } from './providers/types.js';
 import { loadRuntimeConfig, buildProviderFromConfig, modelWhitelistOf } from './config.js';
@@ -37,12 +39,17 @@ export class Runtime {
   readonly gateway: ModelGateway;
   readonly tasks: TaskManager;
   readonly approvals: ApprovalManager;
+  readonly memories: MemoryManager;
+  readonly evolutions: EvolutionManager;
   readonly toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
 
   constructor(opts: RuntimeOptions) {
     const handles = openDatabase(opts.dataDir);
     this.tracesDir = handles.tracesDir;
-    this.trace = new TraceRecorder(handles.db, handles.tracesDir, opts.redaction ?? defaultRedactionPolicy());
+    const redaction = opts.redaction ?? defaultRedactionPolicy();
+    this.trace = new TraceRecorder(handles.db, handles.tracesDir, redaction);
+    this.memories = new MemoryManager({ db: handles.db, trace: this.trace, redaction }); // 同一 redactionPolicy（前置不可削依赖）
+    this.evolutions = new EvolutionManager({ db: handles.db });
     this.failures = new FailureRecorder(handles.db);
     this.audit = new AuditRecorder(handles.db);
     this.registry = new Registry(handles.db);
@@ -65,6 +72,7 @@ export class Runtime {
       toolImpls: this.toolImpls,
       audit: this.audit,
       approvals: this.approvals,
+      memories: this.memories,
       dispatchRoll: opts.dispatchRoll,
     });
     Object.defineProperty(this, 'db', { value: handles.db });

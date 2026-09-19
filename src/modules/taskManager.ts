@@ -7,6 +7,7 @@ import type { StateManager } from './stateManager.js';
 import type { ModelGateway, BudgetLedger, BudgetExceededError, TerminalModelFailure } from './modelGateway.js';
 import { PolicyBlockedError, ToolTerminalFailure, type SpecToolDeclaration } from './toolExecutor.js';
 import type { ApprovalManager } from './approval.js';
+import type { MemoryManager } from './memory.js';
 import { checkInputContract, validateDefensive } from './specValidator.js';
 import { contentHash } from '../hash.js';
 import {
@@ -115,6 +116,8 @@ export interface TaskManagerDeps {
   toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
   audit: AuditRecorder;
   approvals: ApprovalManager;
+  /** v1.1（D-13）：持久化记忆（终态计数钩子 + injection=context 注入构建） */
+  memories: MemoryManager;
   /** v1.1（A5 §4a）：灰度分派随机源（0-99 整数；测试注入确定性，缺省 = 随机） */
   dispatchRoll?: () => number;
 }
@@ -346,6 +349,18 @@ export class TaskManager {
       },
     });
 
+    // v1.1（D-13）记忆注入：仅 memoryPolicy.persistent 且显式 injection='context'（默认 off——无任何注入行为）；
+    // 注入清单留存供 Failed 终态 contradictionCount 判定（「注入且 Failed」可判近似，误差已知接受）
+    let injectedMemoryIds: string[] = [];
+    let memoryInjection: string | undefined;
+    if (spec.memoryPolicy?.type === 'persistent' && spec.memoryPolicy.injection === 'context' && loopOpts.resumeState === undefined) {
+      const injection = deps.memories.buildInjection(base);
+      if (injection) {
+        memoryInjection = injection.text;
+        injectedMemoryIds = injection.memoryIds;
+      }
+    }
+
     try {
       const result = await runAgentLoop({
         base, trace: deps.trace, gateway: deps.gateway, spec,
@@ -359,6 +374,7 @@ export class TaskManager {
         resumeState: loopOpts.resumeState,
         taskStartedAtMs: row.startedAt ? Date.parse(row.startedAt) : undefined,
         timeoutCreditMs: loopOpts.timeoutCreditMs,
+        memoryInjection,
         getDenialCount: () => (this.getTask(taskId) as TaskRow).consecutiveDenialCount,
         setDenialCount: (n) => deps.db.prepare('UPDATE task_record SET consecutiveDenialCount = ? WHERE taskId = ?').run(n, taskId),
         addAttempt: () => deps.db.prepare('UPDATE task_record SET attemptCount = attemptCount + 1 WHERE taskId = ?').run(taskId),
@@ -371,6 +387,11 @@ export class TaskManager {
         outputContractVerdict: 'pass',
         output: result.output,
       });
+      // v1.1（D-13 / F-7）：Succeeded 终态同步写入记忆（content 过同一脱敏管道；独立印证计数）
+      const memPolicy = spec.memoryPolicy;
+      if (memPolicy?.type === 'persistent') {
+        deps.memories.onSucceeded(base, result.output, { ...memPolicy, type: 'persistent' });
+      }
       return this.getTask(taskId);
     } catch (err) {
       if (err instanceof ApprovalPauseSignal) {
@@ -386,6 +407,10 @@ export class TaskManager {
         return this.persistPause(taskId, base, spec, err.pause);
       }
       this.mapTerminalFailure(taskId, base, spec, ledger, err);
+      // v1.1（D-13 / F-7）：Failed 终态同步——注入列表逐条 contradictionCount+1（注入清单在 memory_loaded 已留痕）
+      if (spec.memoryPolicy?.type === 'persistent' && injectedMemoryIds.length > 0) {
+        deps.memories.onFailed(base, injectedMemoryIds);
+      }
       return this.getTask(taskId);
     } finally {
       this.runningCancels.delete(taskId);

@@ -87,16 +87,34 @@ describe('A1 §4 注册准入校验', () => {
     expect(result.issues.some((i) => i.path === 'modelPolicy.allowedModels')).toBe(true);
   });
 
-  it('顶层禁止字段 evolutionPolicy 出现即拒（防悄悄加回）', () => {
-    const spec = sampleSpec({ extraTop: { evolutionPolicy: { anything: true } } });
-    const result = validateRegistration(spec, validationDepsOf(harness.rt));
-    expect(result.issues.some((i) => i.path === 'evolutionPolicy')).toBe(true);
+  it('evolutionPolicy v1.1 解禁（A1 §2.3，D-14）：受约束合法字段；非法结构/requireReviewed=false 仍拒', () => {
+    // A1 v1.1 修订注记：V1 对 evolutionPolicy 的禁止条款废止——迁移为受约束可选字段（批次三）
+    const legal = sampleSpec({ extraTop: { evolutionPolicy: { allowed: true, triggers: ['repeated_failure'], failureThreshold: 3, guardrails: { requireReviewed: true } } } });
+    expect(validateRegistration(legal, validationDepsOf(harness.rt)).ok).toBe(true);
+    // allowed:false 等价缺省（合法）
+    const off = sampleSpec({ extraTop: { evolutionPolicy: { allowed: false } } });
+    expect(validateRegistration(off, validationDepsOf(harness.rt)).ok).toBe(true);
+    // 未知触发器 / 缺 allowed / requireReviewed 显式 false → 拒（防伪声明与越权关闭）
+    const badTrigger = sampleSpec({ extraTop: { evolutionPolicy: { allowed: true, triggers: ['yolo'] } } });
+    expect(validateRegistration(badTrigger, validationDepsOf(harness.rt)).ok).toBe(false);
+    const noAllowed = sampleSpec({ extraTop: { evolutionPolicy: { triggers: ['repeated_failure'] } } });
+    expect(validateRegistration(noAllowed, validationDepsOf(harness.rt)).ok).toBe(false);
+    const noGuardrail = sampleSpec({ extraTop: { evolutionPolicy: { allowed: true, guardrails: { requireReviewed: false } } } });
+    const guardResult = validateRegistration(noGuardrail, validationDepsOf(harness.rt));
+    expect(guardResult.ok).toBe(false);
+    expect(guardResult.issues.some((i) => i.message.includes('requireReviewed'))).toBe(true); // DoD-⑦ 不可关闭
   });
 
-  it('memoryPolicy 非 working 取值被拒（防伪声明）', () => {
-    const spec = sampleSpec({ extraTop: { memoryPolicy: { type: 'persistent' } } });
-    const result = validateRegistration(spec, validationDepsOf(harness.rt));
-    expect(result.ok).toBe(false);
+  it('memoryPolicy v1.1（A1 §2.1，D-13）：persistent 合法（injection 默认 off 由缺省承担）；非法取值仍拒', () => {
+    // A1 v1.1：persistent 为受约束合法值（批次三解禁）；其他取值注册拒绝（防伪声明）
+    const persistent = sampleSpec({ extraTop: { memoryPolicy: { type: 'persistent' } } });
+    expect(validateRegistration(persistent, validationDepsOf(harness.rt)).ok).toBe(true);
+    const full = sampleSpec({ extraTop: { memoryPolicy: { type: 'persistent', writePolicy: 'task_output', maxEntriesPerTask: 5, retentionDays: 30, injection: 'context' } } });
+    expect(validateRegistration(full, validationDepsOf(harness.rt)).ok).toBe(true);
+    const bogus = sampleSpec({ extraTop: { memoryPolicy: { type: 'bogus' } } });
+    expect(validateRegistration(bogus, validationDepsOf(harness.rt)).ok).toBe(false);
+    const badInjection = sampleSpec({ extraTop: { memoryPolicy: { type: 'persistent', injection: 'always' } } });
+    expect(validateRegistration(badInjection, validationDepsOf(harness.rt)).ok).toBe(false);
   });
 
   it('A4 口径：契约实例校验产出 violations（path/expected/actual）', () => {
