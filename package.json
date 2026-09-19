@@ -1,0 +1,27 @@
+{
+  "name": "shanhai",
+  "version": "0.1.0",
+  "description": "山海司 Agent 工程平台 · 第一阶段最小 Runtime（WP-B）",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "shanhai": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "cli": "node dist/cli.js",
+    "experiment": "node dist/experiment/run.js",
+    "release-scan": "node dist/scripts/releaseScan.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

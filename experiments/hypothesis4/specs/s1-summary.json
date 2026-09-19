@@ -1,0 +1,43 @@
+{
+  "specVersion": "1",
+  "identity": {
+    "agentId": "hyp4-s1-summary",
+    "name": "假设4-S1 低复杂度结构化摘要",
+    "description": "输入短文本，输出扁平结构化摘要（≤5 字段，1 层枚举）——假设 #4 实验制品，冻结于启动前 Git 哈希",
+    "author": "WP-B"
+  },
+  "mission": {
+    "responsibilities": ["对输入文本产出扁平结构化摘要"],
+    "nonResponsibilities": ["改写原文", "补充原文之外的知识"]
+  },
+  "inputContract": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "minLength": 20, "maxLength": 2000, "description": "待摘要文本" }
+    },
+    "required": ["text"],
+    "additionalProperties": false
+  },
+  "outputContract": {
+    "type": "object",
+    "properties": {
+      "topic": { "type": "string", "minLength": 2, "maxLength": 60 },
+      "sentiment": { "type": "string", "enum": ["positive", "neutral", "negative"] },
+      "language": { "type": "string", "enum": ["zh", "en"] },
+      "keywordCount": { "type": "integer", "minimum": 1, "maximum": 50 },
+      "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    "required": ["topic", "sentiment", "language", "keywordCount", "confidence"],
+    "additionalProperties": false
+  },
+  "modelPolicy": {
+    "allowedModels": ["__EXPERIMENT_MODEL__"],
+    "maxModelCalls": 12,
+    "maxTokens": 200000,
+    "maxAttempts": 3,
+    "callTimeoutMs": 60000
+  },
+  "toolPolicy": {
+    "tools": [{ "toolId": "docs-list", "riskLevel": "L0" }]
+  }
+}

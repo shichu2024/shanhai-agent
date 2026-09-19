@@ -1,0 +1,10 @@
+{
+  "$comment": "T3 发布安全模板：复制为 config.local.json（已入 .gitignore）并填写。密钥一律经环境变量注入，本文件永不包含密钥。",
+  "providers": {
+    "anthropic": {
+      "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+      "authTokenEnv": "SHANHAI_ANTHROPIC_AUTH_TOKEN",
+      "models": ["glm-4.6"]
+    }
+  }
+}

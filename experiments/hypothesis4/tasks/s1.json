@@ -1,0 +1,12 @@
+[
+  { "id": "s1-t01", "text": "山海司第一阶段设计文档经五轮对抗式讨论后定稿，三条设计底线全部冻结，实施按最小章程启动。团队对此结果整体持积极态度。" },
+  { "id": "s1-t02", "text": "The migration to the new storage layer stalled again this week. Data loss was avoided, but two downstream services remain degraded and no rollback path has been validated." },
+  { "id": "s1-t03", "text": "本文档介绍 SQLite WAL 模式下单写者的崩溃一致性保证：同步写、先持久化后继续、以及索引恢复程序的对账水位设计。" },
+  { "id": "s1-t04", "text": "The release went out on schedule. Adoption numbers are flat so far, and the team is neither celebrating nor alarmed." },
+  { "id": "s1-t05", "text": "预算超限被误记为策略拦截，归因漂移导致复盘结论失效，事故复盘要求所有终局失败分类由触发路径机械决定，不得就近归类。" },
+  { "id": "s1-t06", "text": "A short note: the API returns 429 on most requests tonight. Retry queues are filling up and pages have been paged twice already." },
+  { "id": "s1-t07", "text": "规格重建完成：A1 至 A6 六份字段表齐备，可映射为实现输入，等待三角色评审与终审签字，进度正常。" },
+  { "id": "s1-t08", "text": "This changelog entry is neutral in tone: version 2.3.0 renames three CLI flags and removes the legacy config reader." },
+  { "id": "s1-t09", "text": "密钥扫描在发布物中发现已知格式命中，发布被拒绝，安全团队要求轮换全部凭据并重新审计，事件等级定为高危。" },
+  { "id": "s1-t10", "text": "The observability proposal was received well. Engineers support tracing from day one, though budget owners have not committed funds yet." }
+]

@@ -1,0 +1,65 @@
+{
+  "specVersion": "1",
+  "identity": {
+    "agentId": "hyp4-s2-extraction",
+    "name": "假设4-S2 中复杂度结构化信息提取",
+    "description": "输入文档描述文本，提取 10–15 字段含嵌套对象与日期/枚举格式约束——假设 #4 实验制品，冻结于启动前 Git 哈希",
+    "author": "WP-B"
+  },
+  "mission": {
+    "responsibilities": ["从输入文本提取结构化元数据"],
+    "nonResponsibilities": ["推测文本未给出的元数据取值"]
+  },
+  "inputContract": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "minLength": 50, "maxLength": 4000, "description": "待提取的文档描述" }
+    },
+    "required": ["text"],
+    "additionalProperties": false
+  },
+  "outputContract": {
+    "type": "object",
+    "properties": {
+      "title": { "type": "string", "minLength": 2, "maxLength": 120 },
+      "publishDate": { "type": "string", "format": "date", "minLength": 10, "maxLength": 10 },
+      "authors": {
+        "type": "array", "minItems": 1, "maxItems": 5,
+        "items": { "type": "string", "minLength": 2, "maxLength": 40 }
+      },
+      "category": { "type": "string", "enum": ["engineering", "research", "product", "operations"] },
+      "tags": {
+        "type": "array", "minItems": 1, "maxItems": 6,
+        "items": { "type": "string", "minLength": 1, "maxLength": 20 }
+      },
+      "difficulty": { "type": "string", "enum": ["introductory", "intermediate", "advanced"] },
+      "sourceType": { "type": "string", "enum": ["blog", "paper", "docs", "changelog"] },
+      "summary": { "type": "string", "minLength": 30, "maxLength": 300 },
+      "metrics": {
+        "type": "object",
+        "properties": {
+          "wordCount": { "type": "integer", "minimum": 10, "maximum": 100000 },
+          "readingMinutes": { "type": "integer", "minimum": 1, "maximum": 600 },
+          "hasCode": { "type": "boolean" }
+        },
+        "required": ["wordCount", "readingMinutes", "hasCode"],
+        "additionalProperties": false
+      },
+      "audience": { "type": "string", "enum": ["developer", "researcher", "manager", "general"] },
+      "language": { "type": "string", "enum": ["zh", "en", "mixed"] },
+      "versionMentioned": { "type": "string", "minLength": 1, "maxLength": 20 }
+    },
+    "required": ["title", "publishDate", "authors", "category", "tags", "difficulty", "sourceType", "summary", "metrics", "audience", "language", "versionMentioned"],
+    "additionalProperties": false
+  },
+  "modelPolicy": {
+    "allowedModels": ["__EXPERIMENT_MODEL__"],
+    "maxModelCalls": 12,
+    "maxTokens": 200000,
+    "maxAttempts": 3,
+    "callTimeoutMs": 60000
+  },
+  "toolPolicy": {
+    "tools": [{ "toolId": "docs-list", "riskLevel": "L0" }]
+  }
+}
