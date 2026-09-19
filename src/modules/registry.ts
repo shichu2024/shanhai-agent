@@ -291,6 +291,57 @@ export class Registry {
     return { diffAgainst: diff.diffAgainst };
   }
 
+  // ---------- A5 §3a/§4a v1.1：灰度双指针 + 权重分派（D-12） ----------
+
+  getCanary(agentId: string): { canaryVersionId: string | null; canaryWeight: number } {
+    const row = this.db
+      .prepare('SELECT canaryVersionId, canaryWeight FROM agent WHERE agentId = ?')
+      .get(agentId) as { canaryVersionId: string | null; canaryWeight: number } | undefined;
+    return { canaryVersionId: row?.canaryVersionId ?? null, canaryWeight: row?.canaryWeight ?? 0 };
+  }
+
+  /** canary set：目标须 Released 且 ≠ current（结构入口 = release --no-pointer + canary set，P1-2 修复） */
+  canarySet(agentId: string, versionId: string, weight: number, who: string): void {
+    const row = this.requireVersion(agentId, versionId);
+    if (row.status !== 'released') {
+      this.cliReject(agentId, versionId, `canary 目标必须为 Released（当前 ${row.status}；正确入口：release --no-pointer → canary set）`, who);
+    }
+    if (this.getPointer(agentId) === versionId) {
+      this.cliReject(agentId, versionId, 'canary 目标不得等于 current 指针目标（先 release --no-pointer 发布，或 rollback current）', who);
+    }
+    if (!Number.isInteger(weight) || weight < 0 || weight > 100) {
+      this.cliReject(agentId, versionId, `canaryWeight 必须为 0-100 整数（收到 ${weight}）`, who);
+    }
+    this.db
+      .prepare('UPDATE agent SET canaryVersionId = ?, canaryWeight = ?, updatedAt = ? WHERE agentId = ?')
+      .run(versionId, weight, nowNs(), agentId);
+    this.audit.versionEvent('canary_configured', who, agentId, { agentId, versionId, weight, op: 'set' }, versionId);
+  }
+
+  /** canary clear：灰度归零（立即，审计）——回退判据路径 */
+  canaryClear(agentId: string, who: string): void {
+    const before = this.getCanary(agentId);
+    this.db
+      .prepare('UPDATE agent SET canaryVersionId = NULL, canaryWeight = 0, updatedAt = ? WHERE agentId = ?')
+      .run(nowNs(), agentId);
+    this.audit.versionEvent('canary_configured', who, agentId, { agentId, op: 'clear', previous: before }, before.canaryVersionId);
+  }
+
+  /** promote：canary→current 晋升 + canary 清零（report 判据为建议，决定权留人，A5 §2） */
+  promote(agentId: string, who: string): string {
+    const canary = this.getCanary(agentId);
+    if (!canary.canaryVersionId || canary.canaryWeight === 0) {
+      this.cliReject(agentId, '-', `无有效灰度可晋升（canaryVersionId=${canary.canaryVersionId ?? 'NULL'}，weight=${canary.canaryWeight}）`, who);
+    }
+    const oldPointer = this.getPointer(agentId);
+    this.setPointer(agentId, canary.canaryVersionId);
+    this.db
+      .prepare('UPDATE agent SET canaryVersionId = NULL, canaryWeight = 0, updatedAt = ? WHERE agentId = ?')
+      .run(nowNs(), agentId);
+    this.audit.versionEvent('version_promoted', who, agentId, { agentId, versionId: canary.canaryVersionId, pointer: { old: oldPointer, new: canary.canaryVersionId } }, canary.canaryVersionId);
+    return canary.canaryVersionId;
+  }
+
   /** A5 §1-6 deprecate：禁止 deprecate 当前指针目标版（P2-6） */
   deprecate(agentId: string, versionId: string, who: string): void {
     const row = this.requireVersion(agentId, versionId);
@@ -301,6 +352,13 @@ export class Registry {
       this.cliReject(
         agentId, versionId,
         '禁止 deprecate 当前指针目标版：先 rollback 到其他 Released 版本，或 release 新版本（A5 §1-6，P2-6）',
+        who,
+      );
+    }
+    if (this.getCanary(agentId).canaryVersionId === versionId) {
+      this.cliReject(
+        agentId, versionId,
+        '禁止 deprecate canary 指针目标版：先 canary clear 或换目标（A5 §1-6 v1.1，P2-6 同规则）',
         who,
       );
     }

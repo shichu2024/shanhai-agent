@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Runtime } from '../src/runtime.js';
 import { MockProvider, type MockScript } from '../src/providers/mock.js';
+import type { RedactionPolicy } from '../src/modules/redaction.js';
 
 export const WHITELIST = ['mock-model'];
 
@@ -13,10 +14,14 @@ export interface Harness {
   repoRoot: string;
 }
 
-export function makeHarness(script: MockScript = [], repoRoot = process.cwd()): Harness {
+export function makeHarness(
+  script: MockScript = [],
+  repoRoot = process.cwd(),
+  extra: { redaction?: RedactionPolicy; dispatchRoll?: () => number } = {},
+): Harness {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'shanhai-test-'));
   const provider = new MockProvider([...script]);
-  const rt = Runtime.withProvider(provider, WHITELIST, dataDir, repoRoot);
+  const rt = Runtime.withProvider(provider, WHITELIST, dataDir, repoRoot, extra.redaction, extra.dispatchRoll);
   rt.startup('test');
   return { rt, provider, dataDir, repoRoot };
 }

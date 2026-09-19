@@ -25,7 +25,9 @@ function migrate(db: Database.Database): void {
   CREATE TABLE IF NOT EXISTS agent (
     agentId            TEXT PRIMARY KEY,
     currentVersionId   TEXT,
-    updatedAt          TEXT NOT NULL
+    updatedAt          TEXT NOT NULL,
+    canaryVersionId    TEXT,
+    canaryWeight       INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS agent_version (
@@ -119,6 +121,9 @@ function migrate(db: Database.Database): void {
   addColumn(db, 'task_record', 'abortRequested', `INTEGER NOT NULL DEFAULT 0`); // 跨进程 abort 持久化标志
   addColumn(db, 'task_record', 'pausedDurationMs', `INTEGER NOT NULL DEFAULT 0`); // Paused 累计（任务级超时挂起期间暂停计时）
   addColumn(db, 'task_record', 'cancelReason', `TEXT`); // v1.1 封闭枚举（user/approval_denied/approval_timeout/abort/superseded）
+  addColumn(db, 'task_record', 'assignmentSource', `TEXT`); // v1.1（A5 §4a）：stable/canary/explicit 灰度分派留痕
+  addColumn(db, 'agent', 'canaryVersionId', `TEXT`); // v1.1（A5 §3a，D-12）：灰度指针（只能指向 Released 且 ≠ current）
+  addColumn(db, 'agent', 'canaryWeight', `INTEGER NOT NULL DEFAULT 0`); // v1.1：0-100；0 = 无灰度（缺省 = 第一阶段行为）
 
   db.exec(`
   -- A3 §5 v1.1：ApprovalRequest（D-4 8 字段 + timeoutAt/callRef；decision 含 superseded）

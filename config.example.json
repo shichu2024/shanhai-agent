@@ -1,10 +1,16 @@
 {
-  "$comment": "T3 发布安全模板：复制为 config.local.json（已入 .gitignore）并填写。密钥一律经环境变量注入，本文件永不包含密钥。",
+  "$comment": "T3 发布安全模板：复制为 config.local.json（已入 .gitignore）并填写。密钥一律经环境变量注入，本文件永不包含密钥。redaction 可选：Trace 写入时脱敏（A6 §8，D-11；管道不可削，缺省 = 默认规则集）。",
   "providers": {
     "anthropic": {
       "baseUrl": "https://open.bigmodel.cn/api/anthropic",
       "authTokenEnv": "SHANHAI_ANTHROPIC_AUTH_TOKEN",
       "models": ["glm-4.6"]
     }
+  },
+  "redaction": {
+    "$comment": "可选段（平台层运行时配置，不进 Spec）。rules 省略 → 默认规则集（密钥格式 + email）；rules: [] → 空规则集（管道仍生效，仅无命中）。命中替换为 [REDACTED:<ruleId>]，原文不落盘。",
+    "rules": [
+      { "ruleId": "email", "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "scope": "payload" }
+    ]
   }
 }

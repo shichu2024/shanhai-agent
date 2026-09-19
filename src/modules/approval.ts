@@ -80,13 +80,9 @@ export class ApprovalManager {
       .get(taskId) as ApprovalRow | undefined) ?? null;
   }
 
-  approvedForTask(taskId: string): ApprovalRow | null {
-    return (this.deps.db
-      .prepare(`SELECT * FROM approval_request WHERE taskId = ? AND decision = 'approved' ORDER BY decidedAt DESC LIMIT 1`)
-      .get(taskId) as ApprovalRow | undefined) ?? null;
-  }
-
-  /** P1-1 修复：当前挂起点（callRef = snapshot.nextCallRef）对应的请求——resume 放行的唯一合法锚点 */
+  /** P1-1 修复：当前挂起点（callRef = snapshot.nextCallRef）对应的请求——resume 放行的唯一合法锚点。
+   * （P3 处置：approvedForTask「按 taskId 查任意历史 approved」已删——P1-1 后无合法消费方，保留即死代码；
+   * 历史裁决统计由 report 直查 approval_request 表。） */
   requestForCallRef(taskId: string, callRef: string): ApprovalRow | null {
     return (this.deps.db
       .prepare(`SELECT * FROM approval_request WHERE taskId = ? AND callRef = ? ORDER BY requestedAt DESC LIMIT 1`)
