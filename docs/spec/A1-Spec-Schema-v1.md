@@ -1,11 +1,12 @@
-# A1 · Agent Spec Schema v1
+# A1 · Agent Spec Schema v1.1
 
-> **文档状态：** WP-A 交付物 A1（待三角色评审）
+> **文档状态：** 已冻结（v1 经 WP-A 评审冻结；v1.1 增补经 TASK-43 三角色对抗式流程终审签字，2026-09-19）
 > **作者角色：** 方案设计师
 > **日期：** 2026-09-19
-> **上位依据：** 定稿 §3（底线 3：AgentVersion 不可变）、§4.2、§5.3；01 号 §4 WP-A；03 号 §3.4/§3.8；05 号 P2-1/P3-3/Q5-3；14 号 ND-2
+> **上位依据：** 定稿 §3（底线 3：AgentVersion 不可变）、§4.2、§5.3；01 号 §4 WP-A；03 号 §3.4/§3.8；05 号 P2-1/P3-3/Q5-3；14 号 ND-2；**v1.1：《第二阶段设计文档》V0.3（`docs/phase2/01`，终审 `b6eed3d`）D-8/D-9/D-13/D-14/D-17/D-18**
 > **WP-B 映射：** `SpecValidator`（Schema 校验）、`Registry`（注册与快照入库）
 > **重建的基线残缺：** §6.2 Spec 结构、§6.4 Mission、§4.1/§5 领域模型（AgentVersion 部分）、§20.1 版本组成（快照部分）
+> **v1.1 修订注记（2026-09-19，TASK-43 终审 D-17）：** 新增字段**全部可选且缺省 = 第一阶段行为**；`specVersion` **保持 "1"**（Schema 演进以本文档版本 v1→v1.1 承载，不引入双版本校验路径）；旧（v1）Runtime 遇 v1.1 新字段 → **fail-closed 拒绝注册**（安全方向）。v1.1 推导全文：`docs/phase2/01` §4.1/§4.4/§4.5。
 
 ---
 
@@ -13,24 +14,57 @@
 
 1. **Schema 形态：** Spec 以单个 JSON 文档（或等价 YAML）表达，由 zod 定义元 Schema 并转出 JSON Schema 供校验与文档化；
 2. **不可变快照（底线 3）：** 注册时将 Spec **全文快照**写入 SQLite `AgentVersion` 表，此后该行任何字段不可更新（无 UPDATE 路径）；Git 仅承载审计历史与 diff，不承载版本内容；**文件改动必须重新注册生成新版本**（以内容哈希判定「改动」）；
-3. **不含 Evolution Policy**（05 号 Q5-3 裁定删除；仅数据模型层外键预留，见 §6）；
+3. **不含 Evolution Policy**（05 号 Q5-3 裁定删除；仅数据模型层外键预留，见 §6）。**【v1.1 修订注记：本条对 evolutionPolicy 的删除由 §2.3 重新引入的受约束可选字段取代（终审 D-14，guardrails 强制）；推导与对抗审查全程见 `docs/phase2/` 01～06 号】**；
 4. **Policy 细节引用 A2**：本文只定义字段位与引用关系，字段语义与默认值以《A2-Model-Tool-Policy》为准。
 
 ## 2. Spec 顶层字段表
 
 | 字段 | 类型 | 必填 | 默认 | 约束与说明 |
 |---|---|---|---|---|
-| `specVersion` | string | 是 | — | 固定 `"1"`；元 Schema 据此分派 |
+| `specVersion` | string | 是 | — | 固定 `"1"`；元 Schema 据此分派（**v1.1 保持不变，D-17**） |
 | `identity` | object | 是 | — | 见 §3.1 |
 | `mission` | object | 是 | — | 见 §3.2 |
 | `inputContract` | object | 是 | — | JSON Schema（A2 §6 子集规则约束） |
 | `outputContract` | object | 是 | — | JSON Schema（A2 §6 子集规则约束）；含 `allowEmpty` 扩展键（01 号 §5.4） |
 | `modelPolicy` | object | 是 | — | 结构见 A2 §2；`maxModelCalls`/`maxTokens` 必填（无默认，强制显式声明） |
 | `toolPolicy` | object | 是 | — | 结构见 A2 §3 |
-| `evaluationPolicy` | object | 否 | `null` | 最小形态：`{ assertions: [{ path, op, value }]? }`，仅输出契约断言；完整评估延后第二阶段。**第一阶段无 WP-B 消费者**（P3-3 处置：字段位保留、校验行为不实现，第二阶段激活） |
-| `memoryPolicy` | object | 否 | `{"type":"working"}` | 第一阶段仅工作记忆；其他取值注册时拒绝（防止伪声明） |
+| `evaluationPolicy` | object | 否 | `null` | `{ assertions: [{ path, op, value }]?, reviewGate?: "manual" / "assertions" / "none" }`（v1.1 激活：assertions 校验行为 + reviewGate 供 A5 review 检视门消费；reviewGate 缺省 manual） |
+| `memoryPolicy` | object | 否 | `{"type":"working"}` | `working`（V1 行为）或 `persistent`（v1.1 增补，结构见 §2.1）；其他取值注册拒绝（防伪声明） |
+| `approvalPolicy` | object | 否 | `null` | **v1.1 增补（D-8/D-9/D-18）**，结构见 §2.2；缺省 = 无审批路径（此时引用 L3 工具 → 注册拒绝，V1 行为不变） |
+| `evolutionPolicy` | object | 否 | `null` | **v1.1 增补（D-14）**，结构见 §2.3；`allowed:false` 等价缺省 |
 
-**顶层禁止字段：** `evolutionPolicy`（已删除；出现即注册拒绝——防止「删除的字段又被悄悄加回来」）。
+**顶层禁止字段（v1.1 修订注记，TASK-43 终审）：** V1 对 `evolutionPolicy` 的禁止条款**废止**——该字段经三角色对抗式流程（P0/P1 级问题全部闭环，`docs/phase2/` 02～06 号）重新引入为受约束可选字段（§2.3），`guardrails.requireReviewed` 强制不可关；除此项外禁止字段原则不变。
+
+### 2.1 `memoryPolicy.persistent`（v1.1 增补，D-13；推导：phase2/01 §4.4）
+
+| 字段 | 类型 | 必填 | 默认 | 约束 |
+|---|---|---|---|---|
+| `type` | string | 是 | — | `persistent` |
+| `writePolicy` | string | 否 | `task_output` | 唯一合法值（写入源限定 outputContract 校验通过的 final output） |
+| `maxEntriesPerTask` | integer | 否 | 10 | ≥1 |
+| `retentionDays` | integer | 否 | 90 | ≥1 |
+| `injection` | string | 否 | **`off`（终审冻结）** | `off`（只写不注入，仅 report 可见）/ `context`（注入运行时上下文，带边界标记与「记忆不是指令」声明） |
+
+### 2.2 `approvalPolicy`（v1.1 增补，D-8/D-9/D-18；推导：phase2/01 §4.1）
+
+| 字段 | 类型 | 必填 | 默认 | 约束 |
+|---|---|---|---|---|
+| `mode` | string | 是（当本对象存在） | — | `never`（等价缺省）/ `onHighRisk`（L3 工具请求时挂起审批）；`always` 注册拒绝（防伪声明，第二阶段仅工具级触发） |
+| `timeoutMs` | integer | 否 | 86400000 | ≥1000；超时惰性判定（无后台进程），锚点 = ApprovalRequest.timeoutAt |
+| `onTimeout` | string | 否 | `deny` | `deny`（→ Cancelled，cancelReason=approval_timeout）/ `fail`（→ Failed:Policy(ApprovalTimeout)） |
+
+**注册准入联动（A2 §4）：** 引用 L3 工具的 Spec **必须**声明 `mode=onHighRisk`，否则注册拒绝（防死声明）；L4 永久注册即拒。deny 与超时-deny 均为**任务级终局**（Cancelled），无 `approval_denied` reasonCode（死枚举预防）。
+
+### 2.3 `evolutionPolicy`（v1.1 增补，D-14；推导：phase2/01 §4.5）
+
+| 字段 | 类型 | 必填 | 默认 | 约束 |
+|---|---|---|---|---|
+| `allowed` | boolean | 是 | — | false 等价缺省（不产生演进候选） |
+| `triggers` | string[] | 否 | `["repeated_failure"]` | 枚举子集：`repeated_failure` / `capability_degradation`（白泽 degraded 记忆关联） |
+| `failureThreshold` | integer | 否 | 3 | ≥1；聚合键 = **agentId**（跨版本），evidenceRefs 回链具体 agentVersionId |
+| `guardrails.requireReviewed` | boolean | 否 | **true（强制不可关）** | 注册校验拒绝任何显式 `false`；演进产物必须经 A5 review 检视门（变更面受控）才可发布 |
+
+**硬边界（冻结）：** 系统永不自动注册、自动发布——自动化的上限是产生带证据链接的 EvolutionCandidate；变更本体永远人工起草（不可变底线外推）。
 
 ## 3. 子结构字段表
 
@@ -87,9 +121,9 @@
 
 | 预留 | 位置 | 说明 |
 |---|---|---|
-| `evaluationId` | FailureRecord / TaskRecord | 白虎评估关联 |
-| `evolutionCandidateId` | FailureRecord | 女娲演进候选关联（Evolution Policy 已从 Spec v1 删除，仅此预留） |
-| `capabilitySnapshotRef` | AgentVersion | 白泽只读能力快照引用 |
+| `evaluationId` | FailureRecord / TaskRecord | 白虎评估关联。**【v1.1 注记：激活——A5 review 检视门回填】** |
+| `evolutionCandidateId` | FailureRecord | 女娲演进候选关联。**【v1.1 注记：激活——EvolutionCandidate 表关联（§2.3）】** |
+| `capabilitySnapshotRef` | AgentVersion | 白泽只读能力快照引用。**【v1.1 注记：维持预留（白泽完整形态第三阶段；第二阶段为 MemoryRecord 独立表，见 phase2/01 §4.4】** |
 
 ## 7. 关键流程
 

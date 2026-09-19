@@ -1,10 +1,10 @@
-# 山海司核心规格 V1 · WP-A 规格重建（A0–A6）
+# 山海司核心规格 V1.1 · WP-A 规格重建（A0–A6）
 
-> **文档状态：** R2 修订版（按反方审查报告 5×P1/9×P2 + 决策官修订指令逐项修订，待反方复审）
+> **文档状态：** **V1.1**——v1 已冻结（WP-A 评审 + WP-C 验收）；v1.1 增补经 TASK-43 三角色对抗式流程终审签字（2026-09-19，D-8～D-18 冻结），规格升格 **V1.x**（D-17：specVersion 字段保持 "1"）
 > **作者角色：** 方案设计师（章程 13 号 §2 默认 owner）
 > **日期：** 2026-09-19
-> **上位依据：** 《第一阶段设计文档-定稿》（commit 1413e66）§4.1 WP-A + 01–15 号归档文档
-> **任务来源：** TASK-38（stage 1）
+> **上位依据：** 《第一阶段设计文档-定稿》（commit 1413e66）§4.1 WP-A + 01–15 号归档文档；**v1.1：《第二阶段设计文档》V0.3 定稿（`docs/phase2/01`，终审 `b6eed3d`）§4.11 增补索引**
+> **任务来源：** TASK-38（stage 1，v1）；TASK-43（stage 1，v1.1）
 
 ---
 
@@ -118,3 +118,13 @@
 | R1 初稿 | 2026-09-19 | A0–A6 首次交付（commit a0e900f） |
 | R2 修订 | 2026-09-19 | 按反方报告 + 决策官指令：P1×5（attempt 粒度 A2§2.1、双路径分工 A3§3.1、C2 分母 A4§4、Tool Registry A2 附录 A、索引恢复程序 A6§6.1）+ P2×9 + P3×4 转处置清单 + D-1–D-7 落定（D-3 接受注册即拒） |
 | R2-1 修复 | 2026-09-19 | 终审裁决专项：A6 §2 `callNo` 改为按 `callKind` 各自独立编号（取反方方案①，与 A2 §2.1/§7 自洽）；README §4.1 追加 P3-5/P3-6 顺手项 |
+| **v1.1（TASK-43）** | 2026-09-19 | **第二阶段规格扩展**（终审 D-8～D-18 冻结落稿）：A1——approvalPolicy/memoryPolicy.persistent(injection 默认 off)/evolutionPolicy 三可选字段 + 顶层禁止条款废止注记 + 外键激活注记；A2——L3 注册放行（须 approvalPolicy）+ L4 永久拒 + §4-2 调用点拦截显式维持（终审 R-3）+ report 单列（R-5）+ §8 审批分支；A3——Paused 激活（D-18 迁移权归 resume 进程，R-1）+ abort/graceful×Paused + TaskRecord 增 4 列 + ApprovalRequest 激活（timeoutAt/callRef/superseded）+ PauseSnapshot 表（§5a，孤儿清理 R-4）+ §6 Paused 不迁移修订注记；A4——Policy(ApprovalTimeout) + deny/superseded 无 FailureRecord + Evolution 聚合键；A5——Reviewed 环 + diff 检视清单（5 项）+ release --no-pointer + canary 双指针（§3a）+ promote + CLI 命令族；A6——8 新事件 + task_cancelled/task_created 载荷扩展 + T2′ 审批可举证 + §8 脱敏机制重写（D-11，叙事义务翻转）+ digest 预言机注记 |
+
+## v1.1 增补一览（WP-2B 实现索引，对应第二阶段批次）
+
+| 批次 | 消费的 v1.1 规格 | 设计推导 |
+|---|---|---|
+| 批次一（审批+Reviewed+中止） | A1 §2.2；A2 §4-3/§8；A3 §2（v1.1 行）/§4/§5/§5a/§6；A4 §1/§3（v1.1 行）；A5 §1/§2（review/resume/approval） | phase2/01 §4.1–§4.3 |
+| 批次二（脱敏+灰度） | A6 §8（v1.1）；A5 §2/§3a；A3 §4 assignmentSource | phase2/01 §4.6/§4.7 |
+| 批次三（记忆+Evolution） | A1 §2.1/§2.3；A4 §3（Evolution 行）；A6 §3（memory 事件）；MemoryRecord 表见 phase2/01 §4.4-2 | phase2/01 §4.4/§4.5 |
+| 批次四（OTel 条件监测+T3 机制化） | A6 §2 OTel 注记维持；T3 清单配置化 = A5 §4 + A6 §8 默认规则集同载体 | phase2/01 §4.8/§4.10 |

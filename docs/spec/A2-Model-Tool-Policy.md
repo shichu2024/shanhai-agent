@@ -1,11 +1,12 @@
 # A2 · Model Policy 与 Tool Policy
 
-> **文档状态：** WP-A 交付物 A2（待三角色评审）
+> **文档状态：** 已冻结（v1 经 WP-A 评审冻结；v1.1 增补经 TASK-43 三角色对抗式流程终审签字，2026-09-19）
 > **作者角色：** 方案设计师
 > **日期：** 2026-09-19
-> **上位依据：** 定稿 §5.2/§6（C3-②③）/§7；03 号 §3.4/§3.5；05 号 备注-2（maxAttempts=3）/P1-3/P2-2/R-3；14 号 ND-2（Schema 子集交集）
+> **上位依据：** 定稿 §5.2/§6（C3-②③）/§7；03 号 §3.4/§3.5；05 号 备注-2（maxAttempts=3）/P1-3/P2-2/R-3；14 号 ND-2（Schema 子集交集）；**v1.1：《第二阶段设计文档》V0.3（`docs/phase2/01`）D-8/D-9/D-18 + 终审 R-3**
 > **WP-B 映射：** `ModelGateway`（预算/重试/usage）、`ToolExecutor`（风险闸门/拦截协议）、`SpecValidator`（子集校验）
 > **重建的基线残缺：** §6.8 Output Contract 子集规则、§6.11 Tool Policy、§7.5.3 策略先于执行、§8.2 工具调用流程、§14.2 安全控制点（风险分级）
+> **v1.1 修订注记（2026-09-19，TASK-43 终审 D-8 + R-3）：** ① L3 语义由「注册即拒」改为「注册放行（须 approvalPolicy）+ 每次调用独立审批」，L4 维持永久注册即拒；② §4-2 运行期调用点按**当前登记等级**拦截的行为**显式维持**（版本固定原则保护 Spec 语义稳定性，不外推到工具本体已重判定为高风险的执行放行——安全阀，非语义锚）。推导全文：`docs/phase2/01` §4.1。
 
 ---
 
@@ -67,11 +68,14 @@
 | L3 | 高风险、不可逆 | **注册即拒**（D-3 裁决落地，见下） |
 | L4 | 禁区（写入安全域、凭据操作等） | **注册即拒**（同上） |
 
-**规则细化（D-3 修订：接受决策官初裁与反方立场，注册即拒）：**
+**规则细化（D-3 修订：接受决策官初裁与反方立场，注册即拒；v1.1 修订见第 3 条）：**
 
-1. **注册时：** Spec 声明 L3/L4 工具 → 注册拒绝，写 `RejectedRequest(kind='spec_registration')`，错误信息指名 `toolPolicy.tools[n].toolId` 与其登记等级——不允许「永不能兑现的声明」进入正式 Spec（与底线 1「Spec 必须被强制执行」对齐）；
-2. **运行期防御纵深：** 若工具在 Spec 注册后被 Tool Registry 重新登记为更高等级，任务时防御性复验（A1 §4）按快照与当前登记不一致 → `Created → Failed: Spec(defensive_revalidation_failed)`；若等级变更发生在任务时复验之后、调用之前的窗口，`ToolExecutor` 在调用点按**当前登记等级**闸门拦截（此时 `risk_level_blocked` 仍是可达 reasonCode）——注册即拒为主路径，运行期闸门为兜底，两层都不放行；
-3. **第二阶段：** L3/L4 随审批流（Paused/ApprovalRequest）启用「注册放行 + 审批后执行」语义，本条届时按章程变更规则修订。
+1. **注册时（v1 行为，L4 永久维持）：** Spec 声明 L4 工具 → 注册拒绝，写 `RejectedRequest(kind='spec_registration')`，错误信息指名 `toolPolicy.tools[n].toolId` 与其登记等级——不允许「永不能兑现的声明」进入正式 Spec（与底线 1「Spec 必须被强制执行」对齐）；
+2. **运行期防御纵深（v1 行为维持；§4-2 v1.1 修订注记——TASK-43 终审 R-3 裁定显式维持本条，防实现漂移）：** 若工具在 Spec 注册后被 Tool Registry 重新登记为更高等级，任务时防御性复验（A1 §4）按快照与当前登记不一致 → `Created → Failed: Spec(defensive_revalidation_failed)`，**不改道转 ApprovalRequest**（隐式改道违反默认拒绝；工具等级升级的正确路径 = 重登记 + Spec 新版本显式声明 approvalPolicy）；若等级变更发生在任务时复验之后、调用之前的窗口，`ToolExecutor` 在调用点按**当前登记等级**闸门拦截（`risk_level_blocked` 可达）——**v1.1 显式维持此第一阶段行为**：版本固定原则保护的是 Spec 语义稳定性，不外推到「工具本体已被重判定为高风险不可逆仍在飞任务按旧等级执行」；与「等级只能升不能降」登记原则同向。**可见性（v1.1，终审 R-5）：** report 旁挂「受工具升级影响的 Spec」只读单列（Spec 声明等级 < 当前登记等级的存量引用清单）；
+3. **【v1.1 修订注记，2026-09-19，TASK-43 终审 D-8/D-9/D-18】第二阶段语义落地：**
+   - **L3 注册放行**：仅当 Spec 声明 `approvalPolicy.mode=onHighRisk`（A1 §2.2）；未声明而引用 L3 工具 → **仍注册拒绝**（防「声明了却无审批路径」的死声明）；
+   - **L3 运行期审批闸门**：每次 L3 调用独立审批——写 ApprovalRequest + PauseSnapshot（A3 §5/§5a）→ `Running → Paused`；approve 只写 decision（任务保持 Paused），`Paused → Running` 迁移权归 `task run --resume` 进程（D-18）；deny / 超时-deny 均为任务级终局 Cancelled；
+   - **L4 维持注册即拒，永久**（写入安全域、凭据操作不属于「人工可审」范畴）。
 
 ## 5. 拦截反馈协议（policy_denied，03 号 §3.5 冻结）
 
@@ -136,12 +140,18 @@
 
 ```text
 模型请求工具 → toolId 在 Spec 声明？否 → policy_denied(not_declared_in_spec)
-            → 风险等级 L3/L4？是 → policy_denied(risk_level_blocked)
+            → 风险等级 L4，或 L3 而未声明 approvalPolicy？是 → policy_denied(risk_level_blocked)
+            → L3 且 approvalPolicy=onHighRisk（v1.1）→ 写 ApprovalRequest + PauseSnapshot
+                → Running → Paused（run 进程退出；approve 只写 decision，
+                   Paused→Running 迁移权归 --resume 进程，D-18）
+                → deny/超时-deny → Paused → Cancelled（任务级终局，无 approval_denied reasonCode）
             → L2 受控字段校验（paramRanges / targetWhitelist）失败 → policy_denied(param_out_of_range | target_not_whitelisted)
             → 放行：执行（L1/L2 写审计记录）→ ToolCall 事件（A6）
             → 拦截：policy_denied 返回模型 + consecutiveDenialCount+1
             → 计数达 maxConsecutiveDenials → Failed:Policy(PolicyBlocked) 终局
 ```
+
+**reasonCode 封闭集（v1.1 注记）：维持 §4 原四值不变**（`risk_level_blocked / not_declared_in_spec / param_out_of_range / target_not_whitelisted`）——审批路径终局走 Cancelled/Failed 状态迁移，不经 policy_denied 反馈（deny 后模型不再获得执行机会，`approval_denied` 为死枚举，显式不设）。
 
 异常：工具执行自身失败/超时 → attempt 级 `Tool(...)` 记录（A4），按 `maxAttempts` 逻辑处理。
 
