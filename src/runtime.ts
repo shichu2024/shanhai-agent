@@ -6,6 +6,7 @@ import { Registry } from './modules/registry.js';
 import { StateManager } from './modules/stateManager.js';
 import { ModelGateway } from './modules/modelGateway.js';
 import { TaskManager } from './modules/taskManager.js';
+import { ApprovalManager } from './modules/approval.js';
 import { BUILTIN_TOOL_DEFS, BUILTIN_TOOL_VERSION, createBuiltinImpls } from './tools/builtin.js';
 import type { ModelProvider } from './providers/types.js';
 import { loadRuntimeConfig, buildProviderFromConfig, modelWhitelistOf } from './config.js';
@@ -30,6 +31,7 @@ export class Runtime {
   readonly state: StateManager;
   readonly gateway: ModelGateway;
   readonly tasks: TaskManager;
+  readonly approvals: ApprovalManager;
   readonly toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
 
   constructor(opts: RuntimeOptions) {
@@ -42,6 +44,12 @@ export class Runtime {
     this.state = new StateManager(handles.db, this.trace, this.failures);
     this.gateway = new ModelGateway(opts.provider, opts.whitelist);
     this.toolImpls = createBuiltinImpls(opts.repoRoot);
+    this.approvals = new ApprovalManager({
+      db: handles.db,
+      trace: this.trace,
+      failures: this.failures,
+      state: this.state,
+    });
     this.tasks = new TaskManager({
       db: handles.db,
       registry: this.registry,
@@ -51,6 +59,7 @@ export class Runtime {
       gateway: this.gateway,
       toolImpls: this.toolImpls,
       audit: this.audit,
+      approvals: this.approvals,
     });
     Object.defineProperty(this, 'db', { value: handles.db });
   }

@@ -45,18 +45,47 @@ export interface ToolExecutorOptions {
   /** 连续拦截计数的读取与写回（持久化于 TaskRecord.consecutiveDenialCount） */
   getDenialCount(): number;
   setDenialCount(n: number): void;
+  /** v1.1（A2 §8）：Spec 声明 approvalPolicy.mode=onHighRisk 时 L3 走审批分支（挂起），其余 L3 仍拦截 */
+  approvalMode?: 'onHighRisk' | 'never' | null;
+}
+
+/** L3 调用等待审批（A2 §8 v1.1 审批分支）——由执行循环接管：写 PauseSnapshot + ApprovalRequest → Paused */
+export class ApprovalRequiredSignal extends Error {
+  /** 挂起调用在批次内的下标（执行循环回填，快照 pendingIndex 锚点） */
+  callIndex?: number;
+
+  constructor(
+    readonly toolId: string,
+    readonly reasonCode: 'risk_level_blocked',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApprovalRequiredSignal';
+  }
 }
 
 export class ToolExecutor {
   constructor(private readonly opts: ToolExecutorOptions) {}
 
-  async execute(callNo: number, toolId: string, args: Record<string, unknown>): Promise<{ outcome: 'ok'; value: unknown } | { outcome: 'denied'; denied: PolicyDeniedResult }> {
+  /**
+   * @param approvedCallRef 已获审批放行的调用键（A2 §8 v1.1：每次 L3 调用独立审批——resume 后该次调用放行）
+   */
+  async execute(
+    callNo: number,
+    toolId: string,
+    args: Record<string, unknown>,
+    approvedCallRef?: string,
+  ): Promise<{ outcome: 'ok'; value: unknown } | { outcome: 'denied'; denied: PolicyDeniedResult }> {
     const { base, trace } = this.opts;
     trace.recordCallEvent(base, 'tool_call_requested', 'tool', callNo, 1, {
       toolId, argsDigest: digestArgs(args),
     });
 
-    const gate = this.gate(toolId, args);
+    const gate = this.gate(toolId, args, callNo, approvedCallRef);
+    if (gate === 'needs_approval') {
+      // 抛给执行循环接管（写 snapshot + request → Paused → run 进程退出，D-18 挂起即退出模型）
+      throw new ApprovalRequiredSignal(toolId, 'risk_level_blocked', `L3 工具 ${toolId} 请求等待人工审批（approvalPolicy.mode=onHighRisk）`);
+    }
     if (gate !== null) {
       const count = this.opts.getDenialCount() + 1;
       this.opts.setDenialCount(count);
@@ -105,8 +134,8 @@ export class ToolExecutor {
     throw new ToolTerminalFailure('internal_error', 'ToolExecutor 不可达路径');
   }
 
-  /** 闸门顺序（A2 §8）：声明检查 → 当前登记等级 L3/L4 → L2 受控字段 */
-  private gate(toolId: string, args: Record<string, unknown>): PolicyDeniedResult | null {
+  /** 闸门顺序（A2 §8）：声明检查 → 当前登记等级 L3/L4（v1.1 审批分支）→ L2 受控字段 */
+  private gate(toolId: string, args: Record<string, unknown>, callNo: number, approvedCallRef?: string): PolicyDeniedResult | null | 'needs_approval' {
     const declared = this.opts.declared.find((t) => t.toolId === toolId);
     if (!declared) {
       return deny(toolId, 'not_declared_in_spec', '工具存在但未在该 Spec 声明（默认拒绝）');
@@ -116,9 +145,20 @@ export class ToolExecutor {
     if (!registry || registry.status !== 'active') {
       return deny(toolId, 'not_declared_in_spec', `工具 ${toolId} 已 ${registry?.status ?? '注销'}，不可调用`);
     }
-    if (currentLevel === 'L3' || currentLevel === 'L4') {
-      // 防御纵深（D-3 规则 2）：注册后等级被上调的窗口期兜底
-      return deny(toolId, 'risk_level_blocked', `当前登记等级 ${currentLevel}（注册即拒为主路径，运行期闸门为兜底）`);
+    if (currentLevel === 'L4') {
+      return deny(toolId, 'risk_level_blocked', `当前登记等级 L4（禁区，注册即拒为主路径，运行期闸门为兜底）`);
+    }
+    if (currentLevel === 'L3') {
+      // A2 §4-2 v1.1（D-8 + 终审 R-3）：调用点按当前登记等级判定——
+      // Spec 声明 L3 + approvalPolicy=onHighRisk → 审批分支（每次调用独立审批）；
+      // 其余（含 L2 声明被重登记上调 L3 的漂移窗口）→ risk_level_blocked 拦截（防御纵深维持）。
+      if (declared.riskLevel === 'L3' && this.opts.approvalMode === 'onHighRisk') {
+        if (approvedCallRef !== undefined && approvedCallRef === String(callNo)) {
+          return null; // 该次调用已获 approve 放行（callRef 匹配，A3 §5）
+        }
+        return 'needs_approval';
+      }
+      return deny(toolId, 'risk_level_blocked', `当前登记等级 L3（注册即拒为主路径，运行期闸门为兜底；R-3 调用点按当前登记等级拦截）`);
     }
     if (declared.riskLevel === 'L2' && declared.controlledFields) {
       const ranges = declared.controlledFields.paramRanges;

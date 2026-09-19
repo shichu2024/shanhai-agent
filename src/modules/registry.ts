@@ -40,6 +40,9 @@ export class RegistrationError extends Error {
   }
 }
 
+/** A5 §1 v1.1：review 检视清单 5 项（顺序冻结，version_reviewed 载荷按此回填） */
+export const REVIEW_ITEMS = ['tools', 'budgets', 'mission', 'approvalPolicy', 'contracts'] as const;
+
 export class Registry {
   readonly audit: AuditRecorder;
 
@@ -157,16 +160,135 @@ export class Registry {
       .run(agentId, versionId, nowNs());
   }
 
-  /** A5 §2 release：draft→released + 指针移动 + 审计 */
-  release(agentId: string, versionId: string, who: string): void {
+  /** A5 §1/§2 v1.1（D-10/D-12）：release 允许 draft→released（直发保留）或 reviewed→released；--no-pointer 发布不移指针（canary 入口） */
+  release(agentId: string, versionId: string, who: string, opts: { noPointer?: boolean } = {}): void {
     const row = this.requireVersion(agentId, versionId);
-    if (row.status !== 'draft') {
-      this.cliReject(agentId, versionId, `release 仅允许 draft→released，当前 ${row.status}`, who);
+    if (row.status !== 'draft' && row.status !== 'reviewed') {
+      this.cliReject(agentId, versionId, `release 仅允许 draft→released（直发保留）或 reviewed→released，当前 ${row.status}`, who);
     }
     this.db.prepare(`UPDATE agent_version SET status='released' WHERE versionId=?`).run(versionId);
+    if (opts.noPointer) {
+      this.audit.versionEvent('version_released', who, agentId, { agentId, versionId, noPointer: true, pointer: { old: this.getPointer(agentId), new: this.getPointer(agentId) } }, versionId);
+      return;
+    }
     const oldPointer = this.getPointer(agentId);
     this.setPointer(agentId, versionId);
-    this.audit.versionEvent('version_released', who, agentId, { agentId, versionId, pointer: { old: oldPointer, new: versionId } }, versionId);
+    this.audit.versionEvent('version_released', who, agentId, { agentId, versionId, noPointer: false, pointer: { old: oldPointer, new: versionId } }, versionId);
+  }
+
+  // ---------- A5 §1 v1.1：Reviewed 环（diff 驱动最小检视清单，D-10） ----------
+
+  /** 检视清单 5 项（A5 §1：自动标注 diff，人工逐项确认） */
+  buildReviewDiff(agentId: string, versionId: string): { diffAgainst: string | null; items: { item: string; changed: boolean; detail: string; flag: 'red' | 'yellow' | null }[] } {
+    const row = this.requireVersion(agentId, versionId);
+    const prev = this.db
+      .prepare(
+        `SELECT versionId, specSnapshot FROM agent_version
+         WHERE agentId = ? AND versionId != ? AND status = 'released' ORDER BY version DESC LIMIT 1`,
+      )
+      .get(agentId, versionId) as { versionId: string; specSnapshot: string } | undefined;
+    const next = JSON.parse(row.specSnapshot) as Record<string, Record<string, unknown>>;
+    if (!prev) {
+      return {
+        diffAgainst: null,
+        items: REVIEW_ITEMS.map((item) => ({ item, changed: false, detail: '无上一 Released 版本（首个发布，无 diff 基线）', flag: null })),
+      };
+    }
+    const old = JSON.parse(prev.specSnapshot) as Record<string, Record<string, unknown>>;
+
+    // ① 工具集变化（新增/移除；风险等级上调重点标红）
+    const toolsOf = (s: Record<string, Record<string, unknown>>) =>
+      new Map(((s.toolPolicy?.tools ?? []) as { toolId: string; riskLevel: string }[]).map((t) => [t.toolId, t.riskLevel]));
+    const oldTools = toolsOf(old);
+    const newTools = toolsOf(next);
+    const added = [...newTools.keys()].filter((t) => !oldTools.has(t));
+    const removed = [...oldTools.keys()].filter((t) => !newTools.has(t));
+    const order = ['L0', 'L1', 'L2', 'L3', 'L4'];
+    const upgraded = [...newTools.keys()].filter((t) => oldTools.has(t) && order.indexOf(newTools.get(t)!) > order.indexOf(oldTools.get(t)!));
+    const toolChanged = added.length + removed.length + upgraded.length > 0;
+    const toolDetail = `新增 [${added.join(', ') || '—'}]；移除 [${removed.join(', ') || '—'}]；等级上调 [${upgraded.map((t) => `${t}:${oldTools.get(t)}→${newTools.get(t)}`).join(', ') || '—'}]`;
+
+    // ② 预算变化（maxModelCalls / maxTokens，增幅 >50% 标黄）
+    const budgetOf = (s: Record<string, Record<string, unknown>>, key: string) => Number(s.modelPolicy?.[key] ?? 0);
+    const budgetDeltas = (['maxModelCalls', 'maxTokens'] as const).map((k) => {
+      const o = budgetOf(old, k);
+      const n = budgetOf(next, k);
+      const delta = o > 0 ? Math.round(((n - o) / o) * 100) : null;
+      return { k, o, n, delta };
+    });
+    const budgetChanged = budgetDeltas.some((d) => d.o !== d.n);
+    const budgetFlag = budgetDeltas.some((d) => d.delta !== null && d.delta > 50) ? ('yellow' as const) : null;
+    const budgetDetail = budgetDeltas.map((d) => `${d.k}: ${d.o}→${d.n}${d.delta !== null ? `（${d.delta >= 0 ? '+' : ''}${d.delta}%）` : ''}`).join('；');
+
+    // ③ mission 职责/非职责边界变化
+    const missionChanged = JSON.stringify(old.mission) !== JSON.stringify(next.mission);
+    // ④ approvalPolicy 变化（新高风险工具准入）
+    const approvalChanged = JSON.stringify(old.approvalPolicy ?? null) !== JSON.stringify(next.approvalPolicy ?? null);
+    // ⑤ input/outputContract 结构变化
+    const inputChanged = JSON.stringify(old.inputContract) !== JSON.stringify(next.inputContract);
+    const outputChanged = JSON.stringify(old.outputContract) !== JSON.stringify(next.outputContract);
+
+    return {
+      diffAgainst: prev.versionId,
+      items: [
+        {
+          item: REVIEW_ITEMS[0], changed: toolChanged, detail: toolDetail,
+          flag: upgraded.length > 0 ? ('red' as const) : null,
+        },
+        { item: REVIEW_ITEMS[1], changed: budgetChanged, detail: budgetDetail, flag: budgetFlag },
+        {
+          item: REVIEW_ITEMS[2], changed: missionChanged,
+          detail: missionChanged ? 'mission 职责/非职责边界发生变化（对照旧版逐条核对）' : '无变化', flag: null,
+        },
+        {
+          item: REVIEW_ITEMS[3], changed: approvalChanged,
+          detail: approvalChanged
+            ? `approvalPolicy 变化：${JSON.stringify(old.approvalPolicy ?? null)} → ${JSON.stringify(next.approvalPolicy ?? null)}（新高风险工具准入须复核）`
+            : '无变化', flag: approvalChanged ? ('red' as const) : null,
+        },
+        {
+          item: REVIEW_ITEMS[4], changed: inputChanged || outputChanged,
+          detail: `inputContract ${inputChanged ? '变化' : '无变化'}；outputContract ${outputChanged ? '变化' : '无变化'}`,
+          flag: null,
+        },
+      ],
+    };
+  }
+
+  /** A5 §1 v1.1：Draft→Reviewed 检视门——5 项清单逐项确认（任一 false → 拒绝迁移 + RejectedRequest 审计） */
+  review(
+    agentId: string,
+    versionId: string,
+    who: string,
+    checklist: { item: string; verdict: boolean; note?: string }[],
+    evalId?: string,
+  ): { diffAgainst: string | null } {
+    const row = this.requireVersion(agentId, versionId);
+    if (row.status !== 'draft') {
+      this.cliReject(agentId, versionId, `review 仅允许 draft→reviewed，当前 ${row.status}（无回退边——质量门判定不可撤销，只能重新注册新版本）`, who);
+    }
+    const diff = this.buildReviewDiff(agentId, versionId);
+    const byItem = new Map(checklist.map((c) => [c.item, c]));
+    const missing = REVIEW_ITEMS.filter((item) => !byItem.has(item));
+    if (missing.length > 0) {
+      this.cliReject(agentId, versionId, `检视清单不完整（缺 ${missing.join(', ')}；5 项须逐项确认）`, who);
+    }
+    const unknown = checklist.filter((c) => !(REVIEW_ITEMS as readonly string[]).includes(c.item));
+    if (unknown.length > 0) {
+      this.cliReject(agentId, versionId, `检视清单含未知项（${unknown.map((c) => c.item).join(', ')}；合法项 = ${REVIEW_ITEMS.join(', ')}）`, who);
+    }
+    const failed = REVIEW_ITEMS.filter((item) => byItem.get(item)!.verdict !== true);
+    if (failed.length > 0) {
+      this.cliReject(agentId, versionId, `检视清单存在未通过项（${failed.join(', ')}）——拒绝迁移 Draft→Reviewed（A5 §1）`, who);
+    }
+    this.db.prepare(`UPDATE agent_version SET status='reviewed' WHERE versionId=?`).run(versionId);
+    this.audit.versionEvent('version_reviewed', who, agentId, {
+      agentId, versionId,
+      evalId: evalId ?? null,
+      checklist: REVIEW_ITEMS.map((item) => ({ item, verdict: true, note: byItem.get(item)?.note })),
+      diffAgainst: diff.diffAgainst, // 检视内容可追溯（A6 §5 v1.1）
+    }, versionId);
+    return { diffAgainst: diff.diffAgainst };
   }
 
   /** A5 §1-6 deprecate：禁止 deprecate 当前指针目标版（P2-6） */

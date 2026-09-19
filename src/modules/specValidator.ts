@@ -54,10 +54,19 @@ const metaSchema = z
         assertions: z
           .array(z.object({ path: z.string(), op: z.string(), value: z.unknown().optional() }))
           .optional(),
+        reviewGate: z.enum(['manual', 'assertions', 'none']).optional(), // v1.1（A1 §2）：A5 review 检视门消费，缺省 manual
       })
       .optional()
       .nullable(),
     memoryPolicy: z.object({ type: z.literal('working') }).optional(),
+    approvalPolicy: z // v1.1 增补（A1 §2.2，D-8/D-9/D-18）：缺省 = 无审批路径（V1 行为不变）
+      .object({
+        mode: z.enum(['never', 'onHighRisk'], { errorMap: () => ({ message: 'approvalPolicy.mode 仅为 never/onHighRisk（always 注册拒绝，防伪声明——D-9）' }) }),
+        timeoutMs: z.number().int().min(1000).optional(),
+        onTimeout: z.enum(['deny', 'fail']).optional(),
+      })
+      .optional()
+      .nullable(),
   })
   .strict(); // 顶层封闭：evolutionPolicy 等未声明字段出现即拒绝（A1 §2 顶层禁止字段）
 
@@ -120,10 +129,20 @@ export function validateRegistration(spec: unknown, deps: ValidationDeps): Regis
     if (entry.riskLevel !== t.riskLevel) {
       issues.push({ path: `${base}.riskLevel`, message: `声明 ${t.riskLevel} 与登记 ${entry.riskLevel} 不一致` });
     }
-    if (t.riskLevel === 'L3' || t.riskLevel === 'L4') {
+    if (t.riskLevel === 'L3') {
+      // A2 §4-3 v1.1（D-8）：L3 注册放行，仅当 approvalPolicy.mode=onHighRisk（防「声明了却无审批路径」的死声明）
+      const mode = s.approvalPolicy?.mode;
+      if (mode !== 'onHighRisk') {
+        issues.push({
+          path: `${base}.riskLevel`,
+          message: `${t.toolId} 为 L3：引用 L3 工具须声明 approvalPolicy.mode=onHighRisk，否则注册即拒（D-8；当前 ${mode ?? '未声明 approvalPolicy'}）`,
+        });
+      }
+    }
+    if (t.riskLevel === 'L4') {
       issues.push({
         path: `${base}.riskLevel`,
-        message: `${t.toolId} 为 ${t.riskLevel}：L3/L4 声明注册即拒（D-3 裁决；登记等级 ${entry.riskLevel}）`,
+        message: `${t.toolId} 为 L4：禁区工具注册即拒，永久（D-3；写入安全域/凭据操作不属于「人工可审」范畴）`,
       });
     }
     if (t.riskLevel === 'L2') {

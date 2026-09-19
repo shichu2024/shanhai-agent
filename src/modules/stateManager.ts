@@ -9,7 +9,12 @@ import { FailureRecorder } from './recorders.js';
 export interface RecoveryReport {
   reconciledTasks: string[]; // 触发了索引重建的 taskId
   crashMarkedTasks: string[]; // 迁移为 Failed:Runtime(CrashRecovery) 的 taskId
+  staleQueuedTasks: string[]; // v1.1 只读警示：Queued 超宽限窗未被任何进程执行（不改状态，A3 §6）
+  stalePausedTasks: string[]; // v1.1 只读警示：Paused 且审批已超时未被惰性判定（提示跑 approval list，A3 §6）
 }
+
+/** stale Queued 宽限窗（天级量级配置项，A3 §6；默认 7 天，WP-B 定） */
+const STALE_QUEUED_GRACE_MS = 7 * 24 * 3600 * 1000;
 
 export class StateManager {
   constructor(
@@ -19,9 +24,10 @@ export class StateManager {
   ) {}
 
   /** 进程重启钩子：① 逐 task 索引对账（O(1) 水位比对）→ ② Running 遗留 → Failed:Runtime(CrashRecovery)。幂等。
-   * A3 §6（F-1 修订）：崩溃标记扫描范围仅 Running（有执行副作用的中间态）；Queued 不迁移。 */
+   * A3 §6（F-1 修订）：崩溃标记扫描范围仅 Running（有执行副作用的中间态）；Queued/Paused 不迁移。
+   * v1.1（终审 R-4）：CrashRecovery 终局顺带删该 taskId 的 PauseSnapshot（孤儿快照兜底——任务从未进入 Paused）。 */
   recover(): RecoveryReport {
-    const report: RecoveryReport = { reconciledTasks: [], crashMarkedTasks: [] };
+    const report: RecoveryReport = { reconciledTasks: [], crashMarkedTasks: [], staleQueuedTasks: [], stalePausedTasks: [] };
 
     // ① 对账：以 JSONL 文件为唯一真源，水位 = (行数, 末位 eventId)
     const tasks = this.db
@@ -79,21 +85,50 @@ export class StateManager {
       this.trace.recordTaskEvent(base, 'task_failed', {
         failureClass: 'Runtime', subClass: 'CrashRecovery', failureRecordId: recordId,
       });
+      // R-4：孤儿 PauseSnapshot 兜底清理——kill 落在 snapshot 写后、Paused 迁移前 → 任务从未进入 Paused；
+      // 同窗口内已写入的 pending ApprovalRequest 一并作废（superseded）——否则 approve/deny 永远 task_not_paused、list 永远挂脏行
+      this.db.prepare('DELETE FROM pause_snapshot WHERE taskId = ?').run(t.taskId);
+      this.db
+        .prepare(`UPDATE approval_request SET decision='superseded', decidedAt=? WHERE taskId = ? AND decision='pending'`)
+        .run(nowNs(), t.taskId);
       report.crashMarkedTasks.push(t.taskId);
     }
+
+    // v1.1 只读警示（A3 §6）：不改状态、不写 FailureRecord、不写 Trace——可见性交还操作者
+    const now = Date.now();
+    report.staleQueuedTasks = (
+      this.db
+        .prepare(`SELECT taskId FROM task_record WHERE status = 'queued' AND createdAt < ?`)
+        .all(new Date(now - STALE_QUEUED_GRACE_MS).toISOString()) as { taskId: string }[]
+    ).map((r) => r.taskId);
+    report.stalePausedTasks = (
+      this.db
+        .prepare(
+          `SELECT t.taskId FROM task_record t JOIN approval_request a ON a.taskId = t.taskId
+           WHERE t.status = 'paused' AND a.decision = 'pending' AND a.timeoutAt < ?`,
+        )
+        .all(nowNs()) as { taskId: string }[]
+    ).map((r) => r.taskId);
     return report;
   }
 
   // ---------- 先持久化后继续的 TaskRecord 状态写入（A3 不变式②） ----------
+  // expectFrom（可选）：比较并交换（CAS）——UPDATE 带 AND status=expectFrom，changes=0 即竞争失败（先落库者生效，库层强制）。
 
-  transition(taskId: string, status: string, extra: Partial<Record<string, unknown>> = {}): void {
+  transition(taskId: string, status: string, extra: Partial<Record<string, unknown>> = {}, expectFrom?: string): boolean {
     const sets = ['status = ?'];
     const values: unknown[] = [status];
     for (const [k, v] of Object.entries(extra)) {
       sets.push(`${k} = ?`);
       values.push(v);
     }
+    let where = 'taskId = ?';
     values.push(taskId);
-    this.db.prepare(`UPDATE task_record SET ${sets.join(', ')} WHERE taskId = ?`).run(...values);
+    if (expectFrom !== undefined) {
+      where += ' AND status = ?';
+      values.push(expectFrom);
+    }
+    const result = this.db.prepare(`UPDATE task_record SET ${sets.join(', ')} WHERE ${where}`).run(...values);
+    return result.changes === 1;
   }
 }
