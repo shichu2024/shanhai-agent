@@ -105,4 +105,32 @@ describe('DoD-④ abort 立即中止（A3 §2 v1.1 两级取消）', () => {
     // 恢复句柄以正常收尾
     await running;
   });
+
+  it('P2-2 回归：--resume 续跑段在本进程 Running 中 --force → 立即中止（abort 竞速对续跑段一致）', async () => {
+    const h = makeHarness([
+      { kind: 'tool_use', calls: [{ id: 'a1', toolId: 'l3-op', args: {} }] },
+      { kind: 'delay', ms: 400 }, // 续跑段在飞模型调用窗口
+      { kind: 'text', text: validJson },
+    ]);
+    registerL3Tool(h);
+    registerAndRelease(h.rt, approvalSpec('ab-p22'));
+    const taskId = h.rt.tasks.createTask('ab-p22', validInput, 't');
+    await h.rt.tasks.runTask(taskId); // 挂起（r1）
+    const r1 = h.rt.approvals.pendingForTask(taskId)!;
+    h.rt.approvals.approve(r1.requestId, 'human');
+
+    const resumed = h.rt.tasks.runTask(taskId, null, { resume: true });
+    await new Promise((r) => setTimeout(r, 80)); // 续跑段已进入 Running 且处于模型调用中
+    const t0 = Date.now();
+    h.rt.tasks.cancel(taskId, 'operator', { force: true });
+    const row = await resumed;
+    expect(Date.now() - t0).toBeLessThan(350); // 立即（不等 400ms 原子调用完成——修复前退化为 graceful）
+    expect(row.status).toBe('cancelled');
+    expect(row.cancelReason).toBe('abort');
+    const evt = h.rt.trace.readEvents(taskId).filter((e) => e.eventType === 'task_cancelled').at(-1) as {
+      mode: string; abortedDuring: { callKind: string; phase: string };
+    };
+    expect(evt.mode).toBe('abort');
+    expect(evt.abortedDuring).toMatchObject({ callKind: 'model', phase: 'model_call' });
+  });
 });

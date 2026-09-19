@@ -259,9 +259,11 @@ export class TaskManager {
       }
       throw new Error(`任务 ${taskId} 状态为 ${row.status}（--resume 仅适用于 Paused）`);
     }
-    const approved = deps.approvals.approvedForTask(taskId);
-    if (!approved) {
-      throw new Error(`任务 ${taskId} 无 decision=approved 的审批请求（先 approval approve <requestId>）`);
+    // P1-1 修复（反方复现）：放行条件绑定当前挂起点——快照 nextCallRef 对应的那条请求必须
+    // decision='approved' 且无 pending 在先。「按 taskId 查任意历史 approved」会旁路第二轮独立审批。
+    const pending = deps.approvals.pendingForTask(taskId);
+    if (pending) {
+      throw new Error(`任务 ${taskId} 当前挂起点（callRef=${pending.callRef}）的审批请求仍 pending——先 approval approve/deny ${pending.requestId}`);
     }
     const snapshot = deps.approvals.getSnapshot(taskId);
     if (!snapshot) {
@@ -279,6 +281,13 @@ export class TaskManager {
 
     // pausedDurationMs 累计（A3 §4：任务级超时挂起期间暂停计时，挂钟 ≠ 执行时钟）
     const pausedDurationMs = (row.pausedDurationMs ?? 0) + (Date.now() - Date.parse(snapshot.savedAt));
+    // 放行锚点 = 当前挂起点的请求（callRef = snapshot.nextCallRef）必须已 approved——每次 L3 调用独立审批
+    const approved = deps.approvals.requestForCallRef(taskId, snapshot.nextCallRef);
+    if (!approved || approved.decision !== 'approved') {
+      throw new Error(
+        `任务 ${taskId} 当前挂起点（callRef=${snapshot.nextCallRef}）无 decision=approved 的审批请求（先 approval approve；历史 approved 不放行新一轮挂起——每次 L3 调用独立审批）`,
+      );
+    }
     // Paused → Running 迁移（先持久化，R-1）——CAS 'paused'：迁移权在库层裁决（approve-spawn 与 manual-resume 并发时先落库者生效）
     if (!deps.state.transition(taskId, 'running', { pausedDurationMs }, 'paused')) {
       throw new Error(`任务 ${taskId} 迁移权竞争失败：Paused→Running 已由其他进程完成或状态已变更（当前 ${this.getTask(taskId).status}）`);
@@ -303,7 +312,10 @@ export class TaskManager {
     const ledger = new TaskLedger(deps.db, taskId, spec.modelPolicy.maxModelCalls, spec.modelPolicy.maxTokens);
     let cancelRequested = false;
     let abortReject: ((e: AbortRaceMarker) => void) | null = null;
-    const abortPromise = loopOpts.resumeState ? undefined : new Promise<never>((_, reject) => { abortReject = reject; });
+    // P2-2 修复：resume 段同样持有 abort 竞速——本进程 --force 立即生效语义对续跑段一致；
+    // no-op catch 防竞速挂接前被 reject 的 unhandledRejection（不影响 race 语义）
+    const abortPromise = new Promise<never>((_, reject) => { abortReject = reject; });
+    abortPromise.catch(() => {});
     this.runningCancels.set(taskId, {
       graceful: () => {
         cancelRequested = true;

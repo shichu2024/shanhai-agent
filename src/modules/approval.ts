@@ -86,6 +86,13 @@ export class ApprovalManager {
       .get(taskId) as ApprovalRow | undefined) ?? null;
   }
 
+  /** P1-1 修复：当前挂起点（callRef = snapshot.nextCallRef）对应的请求——resume 放行的唯一合法锚点 */
+  requestForCallRef(taskId: string, callRef: string): ApprovalRow | null {
+    return (this.deps.db
+      .prepare(`SELECT * FROM approval_request WHERE taskId = ? AND callRef = ? ORDER BY requestedAt DESC LIMIT 1`)
+      .get(taskId, callRef) as ApprovalRow | undefined) ?? null;
+  }
+
   /** 审批队列（含绑定 agentVersionId 与 contentHash、超时剩余；顺带执行惰性超时判定） */
   list(opts: { pendingOnly?: boolean } = {}): Record<string, unknown>[] {
     this.applyLazyTimeouts();
@@ -173,7 +180,14 @@ export class ApprovalManager {
     if (task.status !== 'paused') {
       throw new ApprovalError(`任务 ${row.taskId} 状态为 ${task.status}（deny 仅适用于 Paused）`, 'task_not_paused', { status: task.status });
     }
-    this.deps.db.prepare(`UPDATE approval_request SET decision='denied', decidedAt=? WHERE requestId=? AND decision='pending'`).run(nowNs(), requestId);
+    // P2-1 修复：与 approve 同源的先落库者生效守卫——UPDATE 带 pending 条件且检查 changes，
+    // 并发（惰性超时/approve）先落库则 deny 整体终止（不写 Trace、不迁移，避免表内裁决与审计漂移）
+    const claimed = this.deps.db
+      .prepare(`UPDATE approval_request SET decision='denied', decidedAt=? WHERE requestId=? AND decision='pending'`)
+      .run(nowNs(), requestId);
+    if (claimed.changes === 0) {
+      throw new ApprovalError(`请求已裁决（decision=${this.getRequest(requestId)?.decision ?? '?'}），先落库者生效`, 'already_decided');
+    }
     const base = this.baseOf(task);
     this.deps.trace.recordTaskEvent(base, 'approval_decided', {
       requestId, decision: 'denied', decidedBy: who, reason: reason ?? null,

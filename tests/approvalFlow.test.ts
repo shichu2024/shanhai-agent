@@ -157,6 +157,44 @@ describe('DoD-① L3 审批端到端（注册→请求→Paused→approve→resu
     const final = await h.rt.tasks.runTask(taskId, null, { resume: true });
     expect(final.status).toBe('succeeded');
   });
+
+  it('P1-1 回归：第二轮挂起 r2 未批时 --resume 必须拒绝——历史 approved 不放行新一轮挂起', async () => {
+    const h = makeHarness([
+      { kind: 'tool_use', calls: [{ id: 'a1', toolId: 'l3-op', args: {} }] },
+      { kind: 'tool_use', calls: [{ id: 'a2', toolId: 'l3-op', args: {} }] },
+      { kind: 'text', text: validJson },
+    ]);
+    registerL3Tool(h);
+    registerAndRelease(h.rt, approvalSpec('ap-p1'));
+    const taskId = h.rt.tasks.createTask('ap-p1', validInput, 't');
+
+    await h.rt.tasks.runTask(taskId); // 第一轮挂起（r1）
+    const r1 = h.rt.approvals.pendingForTask(taskId)!;
+    h.rt.approvals.approve(r1.requestId, 'human');
+    await h.rt.tasks.runTask(taskId, null, { resume: true }); // 续跑 → 第二轮挂起（r2 pending）
+
+    const r2 = h.rt.approvals.pendingForTask(taskId)!;
+    expect(r2.decision).toBe('pending');
+    // 核心断言：r1 的 approved 不得放行 r2 的挂起点
+    await expect(h.rt.tasks.runTask(taskId, null, { resume: true })).rejects.toThrowError(/pending.*先 approval|approval approve/);
+    expect(h.rt.tasks.getTask(taskId).status).toBe('paused'); // 任务停留 Paused，未被错误续跑
+
+    // 批准 r2 后 resume 正常达终态，且无脏 pending 残留
+    h.rt.approvals.approve(r2.requestId, 'human');
+    const final = await h.rt.tasks.runTask(taskId, null, { resume: true });
+    expect(final.status).toBe('succeeded');
+    expect(h.rt.approvals.pendingForTask(taskId)).toBeNull();
+  });
+
+  it('P2-1 回归：已 approve 的请求再 deny → 结构化拒绝（先落库者生效，表内裁决与审计一致）', async () => {
+    const h = makeHarness([{ kind: 'tool_use', calls: [{ id: 'a1', toolId: 'l3-op', args: {} }] }]);
+    const { taskId, request } = await driveToPaused(h, 'ap-p21');
+    h.rt.approvals.approve(request.requestId, 'human');
+    expect(() => h.rt.approvals.deny(request.requestId, 'human')).toThrowError(/已裁决/);
+    // 表内裁决未被覆写、任务未被误终局
+    expect(h.rt.approvals.getRequest(request.requestId)!.decision).toBe('approved');
+    expect(h.rt.tasks.getTask(taskId).status).toBe('paused');
+  });
 });
 
 describe('DoD-② P0-1 修复用例（run 于 Paused 退出/被 kill → approve → --resume → 终态）', () => {
