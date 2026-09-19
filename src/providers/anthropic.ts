@@ -68,6 +68,11 @@ export class AnthropicProvider implements ModelProvider {
       .filter((b) => b.type === 'tool_use')
       .map((b) => ({ id: b.id ?? '', toolId: b.name ?? '', args: b.input ?? {} }));
     if (toolCalls.length > 0) {
+      // 策略 A：强制输出工具的 tool_use 归一化为文本响应，交由网关 accept() 做契约判定与 attempt 重试
+      if (req.forceTool && toolCalls.every((c) => c.toolId === req.forceTool)) {
+        const forced = toolCalls.find((c) => c.toolId === req.forceTool)!;
+        return { kind: 'text', text: JSON.stringify(forced.args), finishReason: data.stop_reason, usage };
+      }
       return { kind: 'tool_use', calls: toolCalls, finishReason: data.stop_reason, usage };
     }
     const text = data.content

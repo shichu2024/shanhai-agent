@@ -6,6 +6,8 @@ import type { TraceEnvelope } from '../modules/traceRecorder.js';
 // 分子 = attempt 1 即契约通过的样本数（首次通过率主指标）；
 // Wilson 95% CI；按 Spec 分层（S1/S2/S3 禁止只报合计）；失败分布按 subClass 直方。
 
+const CONTRACT_SUBCLASSES = new Set(['unparseable_output', 'schema_violation', 'enum_violation', 'format_violation', 'truncation']);
+
 export interface ReportJob {
   specId: string;
   strategy: 'A' | 'B';
@@ -83,7 +85,8 @@ export function generateReport(input: ReportInput): string {
           continue;
         }
         s.failureHist[f.subClass] = (s.failureHist[f.subClass] ?? 0) + 1;
-        if (strategy === 'A') s.providerPassedLocalFailed += 1;
+        // 仅契约子类计入「Provider 通过但本地校验失败」（call_timeout 等非语义不一致样本不计）
+        if (strategy === 'A' && CONTRACT_SUBCLASSES.has(f.subClass)) s.providerPassedLocalFailed += 1;
       }
       const terminal = events.find((e) => e.eventType === 'task_failed') as (TraceEnvelope & { subClass: string }) | undefined;
       if (terminal) s.failureHist[`terminal:${terminal.subClass}`] = (s.failureHist[`terminal:${terminal.subClass}`] ?? 0) + 1;
@@ -106,7 +109,7 @@ export function generateReport(input: ReportInput): string {
   for (const strategy of strategies) {
     lines.push(`## 策略 ${strategy === 'A' ? 'A（原生 structured output）' : 'B（纯 Prompt 声明）'}`);
     lines.push('');
-    lines.push('| Spec 分层 | N | 分母(计入) | 首次通过(主指标) | 首次通过率 | Wilson 95% CI | 含重试通过率 | 平均尝试/任务 |');
+    lines.push('| Spec 分层 | N | 分母(计入) | 首次通过(主指标) | 首次通过率 | Wilson 95% CI | 含重试通过率 | 平均模型调用/任务（成本代理） |');
     lines.push('|---|---|---|---|---|---|---|---|');
     const stats: LayerStat[] = [];
     for (const specId of specIds) {

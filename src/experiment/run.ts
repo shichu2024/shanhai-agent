@@ -98,8 +98,8 @@ async function main(): Promise<void> {
   const gitHash = getGitHead();
   const report = generateReport({
     rt,
-    specIds: SPEC_IDS.map((s) => `hyp4-${s}`),
-    specLabels: Object.fromEntries(SPEC_IDS.map((s) => [`hyp4-${s}`, s])),
+    specIds: [...SPEC_IDS],
+    specLabels: Object.fromEntries(SPEC_IDS.map((s) => [s, s])),
     strategies: [...STRATEGIES],
     model,
     gitHash,

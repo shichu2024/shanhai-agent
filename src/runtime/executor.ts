@@ -3,6 +3,7 @@ import type { ModelGateway, BudgetLedger } from '../modules/modelGateway.js';
 import type { ProviderResponse } from '../providers/types.js';
 import type { ChatMessage, ToolDeclaration } from '../providers/types.js';
 import { ToolExecutor, ToolTerminalFailure, type SpecToolDeclaration, type PolicyDeniedResult } from '../modules/toolExecutor.js';
+import { TerminalModelFailure } from '../modules/modelGateway.js';
 import { checkOutputContract, getAllowEmpty, getContractBody } from '../modules/specValidator.js';
 import { sha256Hex } from '../hash.js';
 
@@ -123,11 +124,11 @@ export async function runAgentLoop(ctx: ExecutorContext): Promise<ExecutorSuccee
       for (const call of response.value.calls) {
         toolCallNo += 1;
         ctx.addAttempt();
-        // 原生策略：emit_output 视为最终输出提交
+        // 原生策略：emit_output 视为最终输出提交（归因不漂移：参数不符契约属 Model 契约子类，非 Tool）
         if (ctx.strategy === 'native' && call.toolId === OUTPUT_TOOL_NAME) {
           const verdict = judgeOutput({ kind: 'text', text: JSON.stringify(call.args), finishReason: null }, contractBody, allowEmpty);
           if (verdict.ok) return new ExecutorSucceeded(call.args);
-          throw new ToolTerminalFailure('invalid_params', `emit_output 参数不符契约：${verdict.message}`);
+          throw new TerminalModelFailure(verdict.subClass, `emit_output 参数不符契约：${verdict.message}`, verdict.violations, null);
         }
         const outcome = await toolExec.execute(toolCallNo, call.toolId, asArgs(call.args));
         assertNotCancelled(ctx);
