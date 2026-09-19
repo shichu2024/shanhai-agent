@@ -89,3 +89,44 @@ export function queryT2(rt: Runtime, agentVersionId: string): T2Answer {
 
   return { agentVersionId, agentId: version.agentId, rejectedRequests: rejected, policyDeniedEvents, unresolvableTaskCreations: unresolvable };
 }
+
+/** T2′ 审批可举证（A6 §6 v1.1，玄武最小验收面）：给定任一 Agent 版本，单一查询返回其全部 L3 审批请求及裁决——
+ * ApprovalRequest（表级 agentVersionId 索引）∪ Trace approval_requested/approval_decided 事件（信封版本过滤）。 */
+export interface T2PrimeAnswer {
+  agentVersionId: string;
+  agentId: string;
+  requests: {
+    requestId: string; taskId: string; toolId: string; riskLevel: string;
+    requestedAt: string; decision: string; decidedAt: string | null; timeoutAt: string; callRef: string;
+  }[];
+  events: { eventId: string; taskId: string; timestamp: string; eventType: string; requestId: string; decision?: string }[];
+}
+
+export function queryT2Prime(rt: Runtime, agentVersionId: string): T2PrimeAnswer {
+  const db: Database.Database = (rt as unknown as { db: Database.Database }).db;
+  const version = rt.registry.getVersion(agentVersionId);
+  if (!version) throw new Error(`版本不存在：${agentVersionId}`);
+
+  const requests = db
+    .prepare(`SELECT requestId, taskId, toolId, riskLevel, requestedAt, decision, decidedAt, timeoutAt, callRef
+              FROM approval_request WHERE agentVersionId = ? ORDER BY requestedAt`)
+    .all(agentVersionId) as T2PrimeAnswer['requests'];
+
+  const indexRows = db
+    .prepare(`SELECT eventId, taskId, timestamp, eventType FROM trace_index
+              WHERE agentVersionId = ? AND eventType IN ('approval_requested','approval_decided') ORDER BY timestamp`)
+    .all(agentVersionId) as { eventId: string; taskId: string; timestamp: string; eventType: string }[];
+  const wanted = new Set(indexRows.map((r) => r.eventId));
+  const events: T2PrimeAnswer['events'] = [];
+  for (const taskId of new Set(indexRows.map((r) => r.taskId))) {
+    for (const ev of rt.trace.readEvents(taskId)) {
+      if (wanted.has(ev.eventId)) {
+        events.push({
+          eventId: ev.eventId, taskId, timestamp: ev.timestamp, eventType: ev.eventType,
+          requestId: String(ev.requestId ?? ''), decision: ev.decision !== undefined ? String(ev.decision) : undefined,
+        });
+      }
+    }
+  }
+  return { agentVersionId, agentId: version.agentId, requests, events };
+}

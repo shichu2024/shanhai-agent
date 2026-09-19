@@ -95,3 +95,24 @@ export function validationDepsOf(rt: Runtime) {
 }
 
 export const validInput = { topic: '第一阶段设计文档定稿' };
+
+/** 批次一用例基座：登记 L3 工具 + 挂实现（approvalPolicy=onHighRisk 路径） */
+export function registerL3Tool(h: Harness, toolId = 'l3-op'): void {
+  h.rt.registry.registerTool(
+    {
+      toolId, name: toolId, kind: 'builtin', riskLevel: 'L3',
+      implVersion: '0.1.0', paramSchema: '{}', controlledFieldsSchema: null, status: 'active',
+    },
+    'test',
+  );
+  h.rt.toolImpls.set(toolId, (args) => ({ ok: true, echo: args }));
+}
+
+/** 声明 L3 审批路径的 Spec（A1 §2.2 approvalPolicy） */
+export function approvalSpec(agentId: string, overrides: { approvalPolicy?: Record<string, unknown> } = {}): Record<string, unknown> {
+  return sampleSpec({
+    agentId,
+    tools: [{ toolId: 'l3-op', riskLevel: 'L3' }],
+    extraTop: { approvalPolicy: { mode: 'onHighRisk', timeoutMs: 86400000, ...overrides.approvalPolicy } },
+  });
+}

@@ -14,7 +14,7 @@ npm install
 npm run build
 cp config.example.json config.local.json   # 按需修改 baseUrl / 模型白名单
 export SHANHAI_ANTHROPIC_AUTH_TOKEN=<你的密钥>   # T3：密钥仅环境变量注入，仓库只留占位
-npm test                                    # 54 项测试（C3/T1/T2/崩溃恢复/F-1 两进程等断言）
+npm test                                    # 82 项测试（第一阶段 54 存量零回退 + 批次一 28 新增：审批流/Reviewed/abort/迁移）
 ```
 
 ## CLI（A5 §2 命令表）
@@ -28,6 +28,25 @@ npm run cli -- task run <taskId>                   # 执行（Queued→Running�
 npm run cli -- query t1 <taskId>                   # T1：Trace → 生效 Spec 版本 + Prompt/工具版本
 npm run cli -- query t2 <versionId>                # T2：版本 → 全部越权尝试与拦截点
 npm run release-scan                               # T3：发布产物密钥/模型权重扫描（零命中通过）
+```
+
+## CLI · 第二阶段批次一（安全与版本核心）
+
+```bash
+# 人工审批完整流（L3 高风险工具，spec 声明 approvalPolicy.mode=onHighRisk）
+npm run cli -- approval list [--pending]           # 审批队列（顺带惰性超时判定）
+npm run cli -- approval approve <requestId>        # 只写 decision；默认前台 spawn resume（--detach 可选）
+npm run cli -- approval deny <requestId>           # 任务级终局 → Cancelled(approval_denied)
+npm run cli -- task run --resume <taskId>          # 续跑挂起任务（持有 Paused→Running 迁移权，D-18/R-1）
+
+# Reviewed 版本环（可选质量门，直发保留）
+npm run cli -- agent review <agentId> <versionId>  # Draft→Reviewed：diff 检视清单 5 项逐项确认
+npm run cli -- agent release <a> <v> --no-pointer  # 发布不移指针（canary 入口）
+
+# 任务立即中止（abort：放弃等待，不回滚已发生副作用）
+npm run cli -- task cancel <taskId> --force        # 本进程立即 / 跨进程登记 abortRequested
+
+npm run cli -- query t2p <versionId>               # T2′：版本 → 全部 L3 审批请求及裁决（审批可举证）
 ```
 
 ## 模块地图（src/）

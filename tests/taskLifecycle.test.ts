@@ -116,9 +116,11 @@ describe('A3 任务生命周期（端到端）', () => {
     rt.tasks.cancel(taskId, 'user');
     const row = await running;
     expect(row.status).toBe('cancelled');
-    const evt = rt.trace.readEvents(taskId).find((e) => e.eventType === 'task_cancelled') as { graceful: boolean; cancelReason: string };
-    expect(evt.graceful).toBe(true);
-    expect(evt.cancelReason).toContain('原子调用');
+    const evt = rt.trace.readEvents(taskId).find((e) => e.eventType === 'task_cancelled') as { mode: string; cancelReason: string; note: string };
+    // A6 v1.1 载荷迁移：graceful 布尔 → mode 枚举；cancelReason 自由文本 → 封闭枚举（user/…/superseded）
+    expect(evt.mode).toBe('graceful');
+    expect(evt.cancelReason).toBe('user');
+    expect(evt.note).toContain('原子调用');
   });
 
   it('输出空且未声明 allowEmpty → Output(ContractViolation)；声明后放行', async () => {

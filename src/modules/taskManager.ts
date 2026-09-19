@@ -6,14 +6,20 @@ import type { Registry } from './registry.js';
 import type { StateManager } from './stateManager.js';
 import type { ModelGateway, BudgetLedger, BudgetExceededError, TerminalModelFailure } from './modelGateway.js';
 import { PolicyBlockedError, ToolTerminalFailure, type SpecToolDeclaration } from './toolExecutor.js';
+import type { ApprovalManager } from './approval.js';
 import { checkInputContract, validateDefensive } from './specValidator.js';
 import { contentHash } from '../hash.js';
-import { runAgentLoop, ExecutorSucceeded, CancelRequestedSignal, TaskTimeoutSignal, promptHashOf, type ExecSpec } from '../runtime/executor.js';
+import {
+  runAgentLoop, ExecutorSucceeded, CancelRequestedSignal, TaskTimeoutSignal, TaskAbortedSignal, AbortRaceMarker,
+  ApprovalPauseSignal, promptHashOf, type ExecSpec, type PauseContext,
+} from '../runtime/executor.js';
 import type { FailureClass, FailureSubClass, TaskStatus, TraceEventType } from '../types.js';
 
 // A3 状态机驱动 + 审计边界一行规则：
 // TaskRecord 落库前的校验失败 → RejectedRequest 审计（不创建 Task）；
 // 落库后的任何校验失败（含防御性重复校验）→ Created→Failed。
+// v1.1（D-18 + 终审 R-1）：挂起即退出——approve 只写 decision，Paused→Running 迁移权归 --resume 进程；
+// v1.1（A3 §2）：abort 两级取消 + 跨进程 abortRequested + graceful×Paused 立即迁移。
 
 export interface TaskRow {
   taskId: string;
@@ -31,6 +37,9 @@ export interface TaskRow {
   endedAt: string | null;
   traceFile: string;
   terminalFailureClass: string | null;
+  abortRequested: number;
+  pausedDurationMs: number;
+  cancelReason: string | null;
 }
 
 export class TaskCreationRejected extends Error {
@@ -41,6 +50,13 @@ export class TaskCreationRejected extends Error {
     super(message);
     this.name = 'TaskCreationRejected';
   }
+}
+
+/** --resume / cancel 的结构化结果提示 */
+export interface CancelResult {
+  taskId: string;
+  mode: 'graceful' | 'abort';
+  note: string;
 }
 
 class TaskLedger implements BudgetLedger {
@@ -97,27 +113,43 @@ export interface TaskManagerDeps {
   gateway: ModelGateway;
   toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
   audit: AuditRecorder;
+  approvals: ApprovalManager;
+}
+
+interface RunningCancelCtl {
+  graceful(): void;
+  abort(): void;
+}
+
+export interface RunOptions {
+  /** v1.1（D-18）：--resume 续跑挂起任务（持有 Paused→Running 迁移权） */
+  resume?: boolean;
+  /** task_resumed 载荷（approve-spawn / manual-resume 双值均真实可达，终审 R-1） */
+  resumedBy?: 'approve-spawn' | 'manual-resume';
 }
 
 export class TaskManager {
-  private readonly runningCancels = new Map<string, () => void>();
+  private readonly runningCancels = new Map<string, RunningCancelCtl>();
+  private readonly forceCancellers = new Map<string, string>();
 
   constructor(private readonly deps: TaskManagerDeps) {}
 
   /** 任务创建（A3 §3.1 双路径分工：落库前查请求合法性，落库后防世界漂移） */
-  createTask(agentId: string, input: unknown, who: string, opts: { allowDraft?: boolean } = {}): string {
+  createTask(agentId: string, input: unknown, who: string, opts: { allowDraft?: boolean; allowReviewed?: boolean } = {}): string {
     const deps = this.deps;
     const { db, registry, trace } = deps;
 
     // ② 落库前：Spec 存在性与状态（指针指向 Released 版本；agentVersionId 不可解析时为 NULL——A6 §4）
+    // v1.1（A5 §1）：Reviewed 可显式 --reviewed 测试运行（不进正式队列语义）；直发/Released 行为不变
     const pointer = registry.getPointer(agentId);
     const version = pointer ? registry.getVersion(pointer) : null;
     const resolvable = version !== null && version.status === 'released';
     const draftable = opts.allowDraft === true && version !== null && version.status === 'draft';
-    if (!resolvable && !draftable) {
+    const reviewable = opts.allowReviewed === true && version !== null && version.status === 'reviewed';
+    if (!resolvable && !draftable && !reviewable) {
       const reason = !version
         ? `agentId 不可解析或指针悬空：${agentId}`
-        : `指针目标版本状态为 ${version.status}（任务仅可绑定 Released${opts.allowDraft ? ' 或 --draft Draft' : ''}）`;
+        : `指针目标版本状态为 ${version.status}（任务仅可绑定 Released${opts.allowDraft || opts.allowReviewed ? ` 或 --draft Draft${opts.allowReviewed ? ' / --reviewed Reviewed' : ''}` : ''}）`;
       deps.audit.rejectedRequest({
         kind: 'task_creation', who, target: agentId, inputHash: sha256Hex(JSON.stringify(input ?? null)),
         rejectReason: JSON.stringify([{ path: '$', message: reason }]),
@@ -185,17 +217,22 @@ export class TaskManager {
   }
 
   /** Queued → Running → 执行循环 → 终态（归因映射按 A4 §3，触发路径机械决定） */
-  async runTask(taskId: string, strategy: 'native' | 'prompt' | null = null): Promise<TaskRow> {
+  async runTask(taskId: string, strategy: 'native' | 'prompt' | null = null, opts: RunOptions = {}): Promise<TaskRow> {
+    if (opts.resume) {
+      return this.resumeTask(taskId, strategy, opts.resumedBy ?? 'manual-resume');
+    }
     const { deps } = this;
     const row = this.getTask(taskId);
     if (row.status !== 'queued') {
       throw new Error(`任务 ${taskId} 状态为 ${row.status}，仅 Queued 可执行`);
     }
-    const spec = JSON.parse(this.deps.registry.getVersion(row.agentVersionId)!.specSnapshot) as ExecSpec;
-    const base = { taskId, agentId: row.agentId, agentVersionId: row.agentVersionId, specContentHash: row.specContentHash };
+    const spec = JSON.parse(deps.registry.getVersion(row.agentVersionId)!.specSnapshot) as ExecSpec;
+    const base = this.baseOf(row);
 
-    // Queued → Running
-    deps.state.transition(taskId, 'running', { startedAt: nowNs() });
+    // Queued → Running（CAS：先落库者生效——防双 run 进程重复执行）
+    if (!deps.state.transition(taskId, 'running', { startedAt: nowNs() }, 'queued')) {
+      throw new Error(`任务 ${taskId} 状态竞争：Queued→Running 迁移失败（另一进程已取出或状态已变更，当前 ${this.getTask(taskId).status}）`);
+    }
     const bindingSnapshot = {
       toolVersions: spec.toolPolicy.tools.map((t) => {
         const reg = deps.registry.getTool(t.toolId);
@@ -205,11 +242,76 @@ export class TaskManager {
       promptHash: promptHashOf(row.specContentHash), // P2-8：specContentHash 派生 convenience 字段
     };
     trace_event(deps, base, 'task_started', { bindingSnapshot });
+    return this.executeLoop(taskId, row, spec, strategy);
+  }
 
+  /**
+   * v1.1（A3 §2 / 终审 R-1）：`task run --resume` 持有 Paused→Running 迁移权——
+   * 校验 Paused ∧ approved ∧ snapshot 完整 → 迁移（先持久化）+ Trace(task_resumed) → 同进程反序列化 → 从 nextCallRef 继续执行。
+   */
+  private async resumeTask(taskId: string, strategy: 'native' | 'prompt' | null, resumedBy: 'approve-spawn' | 'manual-resume'): Promise<TaskRow> {
+    const { deps } = this;
+    deps.approvals.applyLazyTimeouts(); // resume 触碰 Paused 任务即执行惰性超时判定（A3 §6 v1.1）
+    const row = this.getTask(taskId);
+    if (row.status !== 'paused') {
+      if (deps.approvals.pendingForTask(taskId)) {
+        throw new Error(`任务 ${taskId} 状态为 ${row.status}（审批仍 pending——先 approval approve/deny）`);
+      }
+      throw new Error(`任务 ${taskId} 状态为 ${row.status}（--resume 仅适用于 Paused）`);
+    }
+    const approved = deps.approvals.approvedForTask(taskId);
+    if (!approved) {
+      throw new Error(`任务 ${taskId} 无 decision=approved 的审批请求（先 approval approve <requestId>）`);
+    }
+    const snapshot = deps.approvals.getSnapshot(taskId);
+    if (!snapshot) {
+      throw new Error(`任务 ${taskId} 的 PauseSnapshot 缺失或损坏（任务留 Paused；操作者可 deny 或人工处置）`);
+    }
+    let resumeState: PauseContext;
+    try {
+      const parsed = JSON.parse(snapshot.contextJson) as Omit<PauseContext, 'toolCallNo'>;
+      if (!Array.isArray(parsed.messages) || !Array.isArray(parsed.assistantToolCalls)) throw new Error('结构不完整');
+      const counters = JSON.parse(snapshot.callCounters) as { modelCallNo: number; toolCallNo: number };
+      resumeState = { ...parsed, modelCallNo: parsed.modelCallNo ?? counters.modelCallNo, toolCallNo: counters.toolCallNo };
+    } catch (err) {
+      throw new Error(`任务 ${taskId} 的 PauseSnapshot 损坏（${(err as Error).message}；任务留 Paused，人工处置）`);
+    }
+
+    // pausedDurationMs 累计（A3 §4：任务级超时挂起期间暂停计时，挂钟 ≠ 执行时钟）
+    const pausedDurationMs = (row.pausedDurationMs ?? 0) + (Date.now() - Date.parse(snapshot.savedAt));
+    // Paused → Running 迁移（先持久化，R-1）——CAS 'paused'：迁移权在库层裁决（approve-spawn 与 manual-resume 并发时先落库者生效）
+    if (!deps.state.transition(taskId, 'running', { pausedDurationMs }, 'paused')) {
+      throw new Error(`任务 ${taskId} 迁移权竞争失败：Paused→Running 已由其他进程完成或状态已变更（当前 ${this.getTask(taskId).status}）`);
+    }
+    trace_event(deps, this.baseOf(row), 'task_resumed', { requestId: approved.requestId, resumedBy });
+    deps.approvals.deleteSnapshot(taskId); // 离开 Paused 即删（A3 §5a 生命周期）
+
+    const spec = JSON.parse(deps.registry.getVersion(row.agentVersionId)!.specSnapshot) as ExecSpec;
+    return this.executeLoop(taskId, this.getTask(taskId), spec, strategy, { resumeState, timeoutCreditMs: pausedDurationMs });
+  }
+
+  /** 执行循环 + 终态归因（正常与 resume 共用；挂起信号在此落库并返回 Paused 行） */
+  private async executeLoop(
+    taskId: string,
+    row: TaskRow,
+    spec: ExecSpec,
+    strategy: 'native' | 'prompt' | null,
+    loopOpts: { resumeState?: PauseContext; timeoutCreditMs?: number } = {},
+  ): Promise<TaskRow> {
+    const { deps } = this;
+    const base = this.baseOf(row);
     const ledger = new TaskLedger(deps.db, taskId, spec.modelPolicy.maxModelCalls, spec.modelPolicy.maxTokens);
     let cancelRequested = false;
-    this.runningCancels.set(taskId, () => {
-      cancelRequested = true;
+    let abortReject: ((e: AbortRaceMarker) => void) | null = null;
+    const abortPromise = loopOpts.resumeState ? undefined : new Promise<never>((_, reject) => { abortReject = reject; });
+    this.runningCancels.set(taskId, {
+      graceful: () => {
+        cancelRequested = true;
+      },
+      abort: () => {
+        cancelRequested = true;
+        abortReject?.(new AbortRaceMarker());
+      },
     });
 
     try {
@@ -220,6 +322,11 @@ export class TaskManager {
         toolImpls: deps.toolImpls,
         ledger, strategy,
         isCancelRequested: () => cancelRequested,
+        isAbortRequested: () => this.getTask(taskId).abortRequested === 1, // 跨进程 abortRequested 持久化标志（A3 §2）
+        abortPromise,
+        resumeState: loopOpts.resumeState,
+        taskStartedAtMs: row.startedAt ? Date.parse(row.startedAt) : undefined,
+        timeoutCreditMs: loopOpts.timeoutCreditMs,
         getDenialCount: () => (this.getTask(taskId) as TaskRow).consecutiveDenialCount,
         setDenialCount: (n) => deps.db.prepare('UPDATE task_record SET consecutiveDenialCount = ? WHERE taskId = ?').run(n, taskId),
         addAttempt: () => deps.db.prepare('UPDATE task_record SET attemptCount = attemptCount + 1 WHERE taskId = ?').run(taskId),
@@ -234,18 +341,65 @@ export class TaskManager {
       });
       return this.getTask(taskId);
     } catch (err) {
+      if (err instanceof ApprovalPauseSignal) {
+        // 取消优先于挂起（MEDIUM-3）：cancel 已置位时不落 Paused——取消意图不被审批挂起吞掉
+        if (cancelRequested) {
+          this.mapTerminalFailure(taskId, base, spec, ledger, new CancelRequestedSignal());
+          return this.getTask(taskId);
+        }
+        if (this.getTask(taskId).abortRequested === 1) {
+          this.mapTerminalFailure(taskId, base, spec, ledger, new TaskAbortedSignal({ callNo: 0, callKind: 'model', phase: 'boundary' }));
+          return this.getTask(taskId);
+        }
+        return this.persistPause(taskId, base, spec, err.pause);
+      }
       this.mapTerminalFailure(taskId, base, spec, ledger, err);
       return this.getTask(taskId);
     } finally {
       this.runningCancels.delete(taskId);
+      this.forceCancellers.delete(taskId);
     }
+  }
+
+  /** 挂起序列（A3 §2 v1.1，次序冻结）：写 PauseSnapshot → 写 ApprovalRequest → Running→Paused → Trace → run 进程退出 */
+  private persistPause(taskId: string, base: TaskBase, spec: ExecSpec, pause: PauseContext & { toolId: string }): TaskRow {
+    const { deps } = this;
+    const { toolId, toolCallNo, ...contextOnly } = pause; // contextJson = 对话消息数组（含挂起批次与已执行结果）
+    void toolCallNo;
+    const timeoutMs = spec.approvalPolicy?.timeoutMs ?? 86400000; // A1 §2.2 默认 24h
+    deps.approvals.saveSnapshot(
+      taskId,
+      JSON.stringify(contextOnly),
+      JSON.stringify({ modelCallNo: pause.modelCallNo, toolCallNo: pause.toolCallNo }), // A2 §2.1 计数器持久化载体
+      String(pause.toolCallNo), // nextCallRef
+    );
+    const request = deps.approvals.createRequest(base, toolId, String(pause.toolCallNo), timeoutMs);
+    deps.state.transition(taskId, 'paused');
+    trace_event(deps, base, 'task_paused', { reason: 'high_risk_tool', requestId: request.requestId, callRef: request.callRef });
+    trace_event(deps, base, 'approval_requested', {
+      requestId: request.requestId, toolId, riskLevel: 'L3', timeoutAt: request.timeoutAt, callRef: request.callRef,
+    });
+    return this.getTask(taskId);
   }
 
   private mapTerminalFailure(taskId: string, base: TaskBase, _spec: ExecSpec, ledger: TaskLedger, err: unknown): void {
     if (err instanceof ExecutorSucceeded) throw err; // 不可达防御
     if (err instanceof CancelRequestedSignal) {
-      this.deps.state.transition(taskId, 'cancelled', { endedAt: nowNs() });
-      trace_event(this.deps, base, 'task_cancelled', { cancelReason: '用户取消（等待当前原子调用完成后生效）', graceful: true });
+      this.deps.state.transition(taskId, 'cancelled', { endedAt: nowNs(), cancelReason: 'user' });
+      trace_event(this.deps, base, 'task_cancelled', {
+        cancelReason: 'user', mode: 'graceful',
+        note: '用户取消（等待当前原子调用完成后生效）',
+      });
+      return;
+    }
+    if (err instanceof TaskAbortedSignal) {
+      // abort 边界（A3 §2 v1.1）：Runtime 放弃等待，不回滚已发生的外部副作用；Trace 如实记录中止时点
+      this.deps.state.transition(taskId, 'cancelled', { endedAt: nowNs(), cancelReason: 'abort', abortRequested: 0 });
+      trace_event(this.deps, base, 'task_cancelled', {
+        cancelReason: 'abort', mode: 'abort',
+        abortedDuring: err.abortedDuring,
+        abortRequestedBy: this.forceCancellers.get(taskId) ?? null,
+      });
       return;
     }
     if (err instanceof TaskTimeoutSignal) {
@@ -302,19 +456,65 @@ export class TaskManager {
     return row;
   }
 
-  /** 取消：Queued → Cancelled（无副作用）；Running → 挂起取消标志，等待当前原子调用完成（A3 §2/§7） */
-  cancel(taskId: string, who: string): void {
+  /**
+   * 取消（A3 §2 两级语义）：
+   * graceful——Queued 立即；Running 挂起标志等原子调用完成；Paused 立即（无在飞原子调用，P2-6）；
+   * abort（--force）——本进程：立即放弃在飞原子调用；跨进程：写 abortRequested 持久化标志（执行进程下一原子调用边界生效）。
+   * Paused 被取消：关联 ApprovalRequest 置 superseded + 删 PauseSnapshot。
+   */
+  cancel(taskId: string, who: string, opts: { force?: boolean } = {}): CancelResult {
+    const { deps } = this;
     const row = this.getTask(taskId);
+    const base = this.baseOf(row);
+    const mode: 'graceful' | 'abort' = opts.force ? 'abort' : 'graceful';
+    const cancelReason = opts.force ? 'abort' : 'user';
+
     if (row.status === 'queued') {
-      this.deps.state.transition(taskId, 'cancelled', { endedAt: nowNs() });
-      trace_event(this.deps, { taskId, agentId: row.agentId, agentVersionId: row.agentVersionId, specContentHash: row.specContentHash }, 'task_cancelled', { cancelReason: `用户取消（等待中，无副作用）by ${who}`, graceful: true });
-      return;
+      if (!deps.state.transition(taskId, 'cancelled', { endedAt: nowNs(), cancelReason }, 'queued')) {
+        throw new Error(`任务 ${taskId} 状态竞争：取消时任务已离开 Queued（当前 ${this.getTask(taskId).status}）——请按当前状态重试`);
+      }
+      trace_event(deps, base, 'task_cancelled', { cancelReason, mode, note: '等待中，无副作用（立即）' });
+      return { taskId, mode, note: 'Queued→Cancelled 立即生效' };
     }
+
+    if (row.status === 'paused') {
+      // 挂起态无在飞原子调用 → 立即迁移（P2-6）；CAS 'paused'：与 resume 进程并发时先落库者生效
+      if (!deps.state.transition(taskId, 'cancelled', { endedAt: nowNs(), cancelReason }, 'paused')) {
+        throw new Error(`任务 ${taskId} 状态竞争：取消时任务已离开 Paused（当前 ${this.getTask(taskId).status}；若已被 resume 取出请用 --force）`);
+      }
+      deps.approvals.supersedePending(taskId, who);
+      deps.approvals.deleteSnapshot(taskId);
+      trace_event(deps, base, 'task_cancelled', {
+        cancelReason, mode, abortRequestedBy: opts.force ? who : null,
+        note: '挂起态无在飞原子调用（立即迁移；pending 审批置 superseded，快照已删）',
+      });
+      return { taskId, mode, note: 'Paused→Cancelled 立即生效（superseded + 删快照）' };
+    }
+
     if (row.status === 'running') {
-      this.runningCancels.get(taskId)?.();
-      return;
+      const ctl = this.runningCancels.get(taskId);
+      if (opts.force) {
+        // 持久化标志先行（跨进程可见；本进程由 abort 竞速立即生效）
+        deps.db.prepare('UPDATE task_record SET abortRequested = 1 WHERE taskId = ?').run(taskId);
+        this.forceCancellers.set(taskId, who);
+        if (ctl) {
+          ctl.abort();
+          return { taskId, mode, note: '本进程中止：已放弃在飞原子调用的等待' };
+        }
+        return { taskId, mode, note: '已登记 abortRequested（生效依赖执行进程；跨进程中止延迟上限 = 最长原子调用时长）' };
+      }
+      if (ctl) {
+        ctl.graceful();
+        return { taskId, mode, note: '已挂起取消标志（等待当前原子调用完成后生效）' };
+      }
+      throw new Error(`任务 ${taskId} 由其他进程执行中（跨进程中止请使用 --force；graceful 仅本进程可见）`);
     }
+
     throw new Error(`任务 ${taskId} 状态为 ${row.status}，不可取消`);
+  }
+
+  private baseOf(row: Pick<TaskRow, 'taskId' | 'agentId' | 'agentVersionId' | 'specContentHash'>): TaskBase {
+    return { taskId: row.taskId, agentId: row.agentId, agentVersionId: row.agentVersionId, specContentHash: row.specContentHash };
   }
 }
 

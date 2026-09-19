@@ -34,12 +34,41 @@ function migrate(db: Database.Database): void {
     version            INTEGER NOT NULL,
     specSnapshot       TEXT NOT NULL,
     contentHash        TEXT NOT NULL,
-    status             TEXT NOT NULL CHECK (status IN ('draft','released','deprecated')),
+    status             TEXT NOT NULL CHECK (status IN ('draft','reviewed','released','deprecated')),
     registeredAt       TEXT NOT NULL,
     registeredBy       TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_agent_version_agent ON agent_version(agentId, registeredAt);
+  `);
 
+  // v1.1 迁移（A5 D-10）：存量 agent_version 的 CHECK 不含 'reviewed' → 原地重建（单事务 + 临时表兜底清理，无数据回填）
+  const tableSql = (
+    db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_version'`).get() as { sql: string } | undefined
+  )?.sql ?? '';
+  if (tableSql !== '' && !tableSql.includes("'reviewed'")) {
+    const rebuild = db.transaction(() => {
+      db.exec(`
+      DROP TABLE IF EXISTS agent_version_v11; -- 上次迁移中途崩溃的残留兜底
+      CREATE TABLE agent_version_v11 (
+        versionId          TEXT PRIMARY KEY,
+        agentId            TEXT NOT NULL,
+        version            INTEGER NOT NULL,
+        specSnapshot       TEXT NOT NULL,
+        contentHash        TEXT NOT NULL,
+        status             TEXT NOT NULL CHECK (status IN ('draft','reviewed','released','deprecated')),
+        registeredAt       TEXT NOT NULL,
+        registeredBy       TEXT NOT NULL
+      );
+      INSERT INTO agent_version_v11 SELECT * FROM agent_version;
+      DROP TABLE agent_version;
+      ALTER TABLE agent_version_v11 RENAME TO agent_version;
+      CREATE INDEX IF NOT EXISTS idx_agent_version_agent ON agent_version(agentId, registeredAt);
+      `);
+    });
+    rebuild();
+  }
+
+  db.exec(`
   -- A1 §5 不可变双保险：除 status（A5 状态机唯一合法写入口）外拒绝 UPDATE；禁止 DELETE
   CREATE TRIGGER IF NOT EXISTS trg_agent_version_no_update
   BEFORE UPDATE OF versionId, agentId, version, specSnapshot, contentHash, registeredAt, registeredBy
@@ -84,6 +113,38 @@ function migrate(db: Database.Database): void {
   );
   CREATE INDEX IF NOT EXISTS idx_task_status ON task_record(status);
   CREATE INDEX IF NOT EXISTS idx_task_version ON task_record(agentVersionId);
+  `);
+
+  // v1.1 增列（A3 §4 + §2）：全部 ADD COLUMN 原地支持，无数据回填——新列默认值即第一阶段语义
+  addColumn(db, 'task_record', 'abortRequested', `INTEGER NOT NULL DEFAULT 0`); // 跨进程 abort 持久化标志
+  addColumn(db, 'task_record', 'pausedDurationMs', `INTEGER NOT NULL DEFAULT 0`); // Paused 累计（任务级超时挂起期间暂停计时）
+  addColumn(db, 'task_record', 'cancelReason', `TEXT`); // v1.1 封闭枚举（user/approval_denied/approval_timeout/abort/superseded）
+
+  db.exec(`
+  -- A3 §5 v1.1：ApprovalRequest（D-4 8 字段 + timeoutAt/callRef；decision 含 superseded）
+  CREATE TABLE IF NOT EXISTS approval_request (
+    requestId          TEXT PRIMARY KEY,
+    taskId             TEXT NOT NULL,
+    agentVersionId     TEXT NOT NULL,
+    toolId             TEXT NOT NULL,
+    riskLevel          TEXT NOT NULL,
+    requestedAt        TEXT NOT NULL,
+    decision           TEXT NOT NULL CHECK (decision IN ('pending','approved','denied','superseded')),
+    decidedAt          TEXT,
+    timeoutAt          TEXT NOT NULL,
+    callRef            TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_approval_version ON approval_request(agentVersionId); -- T2′ 表级索引
+  CREATE INDEX IF NOT EXISTS idx_approval_task ON approval_request(taskId);
+
+  -- A3 §5a v1.1：PauseSnapshot（审批挂起点专用最小检查点；非审计对象，离开 Paused 即删）
+  CREATE TABLE IF NOT EXISTS pause_snapshot (
+    taskId             TEXT PRIMARY KEY,
+    contextJson        TEXT NOT NULL,
+    callCounters       TEXT NOT NULL,
+    nextCallRef        TEXT NOT NULL,
+    savedAt            TEXT NOT NULL
+  );
 
   CREATE TABLE IF NOT EXISTS failure_record (
     recordId                TEXT PRIMARY KEY,
@@ -131,4 +192,12 @@ function migrate(db: Database.Database): void {
   CREATE INDEX IF NOT EXISTS idx_trace_task ON trace_index(taskId);
   CREATE INDEX IF NOT EXISTS idx_trace_query ON trace_index(agentVersionId, eventType);
   `);
+}
+
+/** 幂等 ADD COLUMN（存量库原地升级，零回填） */
+function addColumn(db: Database.Database, table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`).run();
+  }
 }

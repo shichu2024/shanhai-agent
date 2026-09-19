@@ -16,7 +16,8 @@ export const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'cancelled',
 ]);
 
-export type VersionStatus = 'draft' | 'released' | 'deprecated';
+// A5 v1.1（D-10）：Reviewed 可选质量门——draft→reviewed→released；无回退边，直发保留
+export type VersionStatus = 'draft' | 'reviewed' | 'released' | 'deprecated';
 
 export type RiskLevel = 'L0' | 'L1' | 'L2' | 'L3' | 'L4';
 
@@ -51,6 +52,7 @@ export type FailureSubClass =
   | 'invalid_params'
   // Policy
   | 'PolicyBlocked'
+  | 'ApprovalTimeout' // v1.1（A4 增补）：onTimeout=fail 的审批超时终局；不计入契约失败率
   // Runtime
   | 'BudgetExceeded'
   | 'TaskTimeout'
@@ -81,7 +83,7 @@ export type PolicyReasonCode =
   | 'param_out_of_range'
   | 'target_not_whitelisted';
 
-// A6 §3 事件目录（封闭集）
+// A6 §3 事件目录（封闭集；v1.1 增 4 审批事件）
 export type TraceEventType =
   | 'task_created'
   | 'task_queued'
@@ -96,17 +98,25 @@ export type TraceEventType =
   | 'task_failed'
   | 'task_cancelled'
   | 'crash_recovery_marked'
-  | 'contract_checked';
+  | 'contract_checked'
+  | 'approval_requested' // v1.1：L3 挂起（requestId/toolId/riskLevel/timeoutAt/callRef）
+  | 'approval_decided' // v1.1：approve/deny/惰性超时/superseded
+  | 'task_paused' // v1.1：Running→Paused（run 进程退出前）
+  | 'task_resumed'; // v1.1：--resume 进程内 Paused→Running（resumedBy 双值均真实可达）
+
+// A3 §2 v1.1：cancelReason 封闭枚举（互斥，落 TaskRecord 与 task_cancelled 事件）
+export type CancelReason = 'user' | 'approval_denied' | 'approval_timeout' | 'abort' | 'superseded';
 
 export type CallKind = 'model' | 'tool';
 
 // 审计流 RejectedRequest kind（A6 §4）
 export type RejectedKind = 'spec_registration' | 'task_creation' | 'cli_operation';
 
-// A5 §5 审计流版本事件
+// A5 §5 审计流版本事件（v1.1 增 version_reviewed）
 export type AuditEventType =
   | 'version_registered'
   | 'version_released'
+  | 'version_reviewed' // v1.1：Draft→Reviewed 检视门（载荷含检视清单，A5 §1）
   | 'version_deprecated'
   | 'version_rollback'
   | 'tool_registered'
