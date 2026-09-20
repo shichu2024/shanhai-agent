@@ -117,11 +117,13 @@ export function buildAgentReport(
       )
       .get(...(since ? [agentId, source, since] : [agentId, source])) as { tasks: number; succeeded: number | null; cancelled: number | null };
     const contractFailures = (
+      // 批次四（批次三验收 P2 修改）：分子对称排除 cancelled——取消前已计入的契约失败不留在分子，
+      // 通过率不被低估、极端面不为负（与分母 D-23 口径同源对称）
       db
         .prepare(
           `SELECT COUNT(DISTINCT f.taskId) AS c FROM failure_record f
            JOIN task_record t ON t.taskId = f.taskId
-           WHERE t.agentId = ? AND t.assignmentSource = ? AND f.countedInContractRate = 1 ${since ? 'AND t.createdAt >= ?' : ''}`,
+           WHERE t.agentId = ? AND t.assignmentSource = ? AND f.countedInContractRate = 1 AND t.status != 'cancelled' ${since ? 'AND t.createdAt >= ?' : ''}`,
         )
         .get(...(since ? [agentId, source, since] : [agentId, source])) as { c: number }
     ).c;

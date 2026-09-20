@@ -72,9 +72,11 @@ export interface ScanFinding {
   detail: string;
 }
 
-/** 扫描统计（可审计残余面：二进制探测跳过数——A6 §8.1 已知未扫描残余的可观测化） */
+/** 扫描统计（可审计残余面：二进制探测跳过数——A6 §8.1 已知未扫描残余的可观测化；
+ * 批次四 P2-1：不可读（EACCES 等）单列计数——属「应扫而未扫」exit 2 语义，不与二进制残余混同） */
 export interface ScanStats {
   binarySkipped: number;
+  unreadableSkipped: number;
 }
 
 // 正反斜杠均归一（配置内手写正斜杠路径在 Windows 上不得静默失配）
@@ -145,23 +147,34 @@ export function scanForRelease(root: string, config: ScanConfig = DEFAULT_SCAN_C
       // config.example 中的占位与文档中的示例说明不视为命中（占位值不含真实密钥材料）
       const isTextByName = TEXT_EXTENSIONS.has(ext) || !ext || COMPOUND_TEXT_SUFFIXES.some((s) => entry.name.toLowerCase().endsWith(s));
       if (isTextByName) {
-        scanText(file, rel, compiled, findings);
+        scanText(file, rel, compiled, findings, stats);
         continue;
       }
       // 择项（D-21）：白名单外扩展名——二进制探测先行（反方执行注记：探测必须先于解码扫描，
       // 二进制内容不得进入 UTF-8 解码），探测放行的未知扩展文本按宽松解码扫描（fail-closed 收敛）；
-      // 探测判为二进制 = 已知未扫描残余（A6 §8 v1.3 成文口径）。
-      if (!looksBinary(file)) {
-        scanText(file, rel, compiled, findings);
-      } else if (stats) {
-        stats.binarySkipped += 1; // 残余可观测：探测判二进制跳过的文件数进统计（CLI 汇总行输出）
+      // 探测判为二进制 = 已知未扫描残余（A6 §8 v1.3 成文口径）；
+      // 批次四 P2-1：不可读（EACCES 等）≠ 二进制——单列计数（应扫而未扫，exit 2 语义）。
+      const probe = probeBinary(file);
+      if (probe === 'unreadable') {
+        if (stats) stats.unreadableSkipped += 1;
+      } else if (probe === 'binary') {
+        if (stats) stats.binarySkipped += 1; // 残余可观测：探测判二进制跳过的文件数进统计（CLI 汇总行输出）
+      } else {
+        scanText(file, rel, compiled, findings, stats);
       }
     }
   }
 }
 
-function scanText(file: string, rel: string, compiled: { name: string; re: RegExp }[], findings: ScanFinding[]): void {
-  const content = readFileSync(file, 'utf8'); // 宽松解码：非法序列替换为 U+FFFD，不中断扫描
+function scanText(file: string, rel: string, compiled: { name: string; re: RegExp }[], findings: ScanFinding[], stats?: ScanStats): void {
+  let content: string;
+  try {
+    content = readFileSync(file, 'utf8'); // 宽松解码：非法序列替换为 U+FFFD，不中断扫描
+  } catch {
+    // 批次四 P2-1：读失败（EACCES 等）= 应扫而未扫——单列计数，扫描不中断（其余文件继续），CLI 终判 exit 2
+    if (stats) stats.unreadableSkipped += 1;
+    return;
+  }
   for (const { name, re } of compiled) {
     const m = re.exec(content);
     if (m) {
@@ -170,16 +183,17 @@ function scanText(file: string, rel: string, compiled: { name: string; re: RegEx
   }
 }
 
-/** 二进制探测：首 8KB 含 NUL 字节即判二进制（文本文件不含 NUL；权重文件已被前置检查拦截） */
-function looksBinary(file: string): boolean {
+/** 二进制探测（批次四 P2-1 三态化）：首 8KB 含 NUL 字节即判二进制（文本文件不含 NUL；权重文件已被前置检查拦截）；
+ * 读取失败（EACCES 等）= unreadable——与二进制严格区分，不混入残余计数。 */
+function probeBinary(file: string): 'text' | 'binary' | 'unreadable' {
   let fd: number | undefined;
   try {
     fd = openSync(file, 'r');
     const buf = Buffer.alloc(8192);
     const bytesRead = readSync(fd, buf, 0, buf.length, 0);
-    return buf.subarray(0, bytesRead).includes(0);
+    return buf.subarray(0, bytesRead).includes(0) ? 'binary' : 'text';
   } catch {
-    return true; // 不可读视为二进制（保守：不进入解码扫描）
+    return 'unreadable';
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -257,6 +271,10 @@ export function runReleaseScanCli(argv: string[], opts: CliRunOptions = {}): num
   for (const f of flags) {
     if (f !== '--allow-exempted-root') err(`T3 发布安全扫描：未识别参数 ${f}（已知：--allow-exempted-root）`); // 拼错 flag 不得静默
   }
+  // 批次四 P3-2：第二及以后位置参数被忽略 → 告警（与未识别 flag 同款纪律，拼错命令面不得静默）
+  if (positional.length > 1) {
+    err(`T3 发布安全扫描：第二及以后位置参数被忽略（仅接受一个扫描根，收到 ${positional.length} 个）——检查命令拼写`);
+  }
   const root = path.resolve(cwd, positional[0] ?? '.');
   const config = loadScanConfigFrom(cwd);
 
@@ -274,15 +292,20 @@ export function runReleaseScanCli(argv: string[], opts: CliRunOptions = {}): num
   }
   // 扫描执行异常（不可读目录 / 非法正则配置 / root 为文件等）不得落入 exit 1（命中）语义——未扫描 ≠ 干净
   let findings: ScanFinding[];
-  const stats: ScanStats = { binarySkipped: 0 };
+  const stats: ScanStats = { binarySkipped: 0, unreadableSkipped: 0 };
   try {
     findings = scanForRelease(root, config, stats);
   } catch (e) {
     err(`T3 发布安全扫描：扫描执行异常——未扫描 ≠ 干净（exit 2）：${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
-  out(`T3 发布安全扫描：${root}（清单 ${config.secretPatterns.length} 密钥正则 / ${config.weightExtensions.length} 扩展名 / ${config.weightMagics.length} 魔数 / safetensors 嗅探 ${config.sniffSafetensors ? 'on' : 'off'} / 豁免 ${config.exemptions.length} 项 / 二进制残余 ${stats.binarySkipped} 个文件）`);
+  out(`T3 发布安全扫描：${root}（清单 ${config.secretPatterns.length} 密钥正则 / ${config.weightExtensions.length} 扩展名 / ${config.weightMagics.length} 魔数 / safetensors 嗅探 ${config.sniffSafetensors ? 'on' : 'off'} / 豁免 ${config.exemptions.length} 项 / 二进制残余 ${stats.binarySkipped} 个文件 / 不可读 ${stats.unreadableSkipped} 个文件）`);
   out(formatFindings(findings));
+  // 批次四 P2-1：不可读（EACCES 等）= 应扫而未扫 ≠ 干净——exit 2（单列计数可观测，扫描不中断但终判不放过）
+  if (stats.unreadableSkipped > 0) {
+    err(`T3 发布安全扫描：${stats.unreadableSkipped} 个文件不可读（EACCES 等）——应扫而未扫 ≠ 干净（exit 2）`);
+    return 2;
+  }
   return findings.length === 0 ? 0 : 1;
 }
 

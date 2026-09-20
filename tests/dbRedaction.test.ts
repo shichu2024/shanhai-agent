@@ -176,7 +176,7 @@ describe('批次二 DoD-①：failure_record.message/expectedVsActual + audit_ev
 describe('批次二 DoD-②：同一 redaction 管道实例（注入标记规则 → Trace 与 DB 四面改写结果一致）', () => {
   it('自定义 marker 规则在 Trace/task_record/pause_snapshot/notes/failure 五面一致改写（实例分裂即红灯）', async () => {
     const marker = 'ZZMARKER7Q';
-    const policy: RedactionPolicy = { rules: [{ ruleId: 'marker', pattern: marker, scope: 'all' }] };
+    const policy: RedactionPolicy = { rules: [{ ruleId: 'marker', pattern: marker}] };
     const repoRoot = mkdtempSync(path.join(tmpdir(), 'shanhai-inst-'));
     const h = makeHarness([
       { kind: 'tool_use', calls: [
@@ -274,7 +274,7 @@ describe('批次二 DoD-⑥ 改进断言①：密钥输出→记忆→注入→p
 
 describe('批次二 §4.7-③：*Hash 后缀入脱敏排除表（自定义 hex 规则不误改写摘要字段面）', () => {
   it('键名以 Hash/Digest 结尾的字符串值零改写；自由文本键照常改写', () => {
-    const policy: RedactionPolicy = { rules: [{ ruleId: 'hexish', pattern: 'AAAABBBBCCCC', scope: 'all' }] };
+    const policy: RedactionPolicy = { rules: [{ ruleId: 'hexish', pattern: 'AAAABBBBCCCC'}] };
     const { payload } = redactEventPayload(
       { inputHash: 'AAAABBBBCCCC', contentHash: 'AAAABBBBCCCC', outputDigest: 'AAAABBBBCCCC', note: 'AAAABBBBCCCC' },
       policy,

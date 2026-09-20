@@ -80,7 +80,8 @@ export class StateManager {
         expectedVsActual: { expected: '终态或无记录', actual: t.status }, traceRef: marked.eventId,
       });
       this.db
-        .prepare(`UPDATE task_record SET status='failed', endedAt=?, terminalFailureClass='Runtime(CrashRecovery)' WHERE taskId=?`)
+        // §4.7-4（批次四）：终局顺带清 abortRequested 残留——跨进程中止意图不外溢到终态行（无害残留清理 + 断言钉死）
+        .prepare(`UPDATE task_record SET status='failed', endedAt=?, terminalFailureClass='Runtime(CrashRecovery)', abortRequested=0 WHERE taskId=?`)
         .run(nowNs(), t.taskId);
       this.trace.recordTaskEvent(base, 'task_failed', {
         failureClass: 'Runtime', subClass: 'CrashRecovery', failureRecordId: recordId,

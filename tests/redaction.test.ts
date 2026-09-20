@@ -60,7 +60,7 @@ describe('DoD-① 脱敏排除表：信封 / bindingSnapshot / *Digest 字段零
         bindingSnapshot: { promptHash: sha256Hex(fakeSecret()) },
         note: `凭据 ${fakeSecret()}`,
       },
-      { rules: [{ ruleId: 'any-secret', pattern: 'sk-ant-[A-Za-z0-9_-]{20,}', scope: 'all' }] },
+      { rules: [{ ruleId: 'any-secret', pattern: 'sk-ant-[A-Za-z0-9_-]{20,}'}] },
     );
     expect(out.payload.outputDigest).toBe(sha256Hex(fakeSecret()).slice(0, 16)); // *Digest 键零改写
     expect((out.payload.bindingSnapshot as { promptHash: string }).promptHash).toBe(sha256Hex(fakeSecret())); // bindingSnapshot 键零改写
@@ -134,7 +134,7 @@ describe('管道不可削（空规则集仍过管道）与规则集可裁', () =
 
   it('自定义规则集：仅 email 规则 → 密钥不命中（规则集内容可裁）', async () => {
     const h = makeHarness([{ kind: 'text', text: JSON.stringify(outputWithSecret()) }], process.cwd(), {
-      redaction: { rules: [{ ruleId: 'email', pattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', scope: 'payload' }] },
+      redaction: { rules: [{ ruleId: 'email', pattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}'}] },
     });
     registerAndRelease(h.rt, sampleSpec({ agentId: 'rd-custom' }));
     const taskId = h.rt.tasks.createTask('rd-custom', { topic: '联系 b@corp.io' }, 't');
