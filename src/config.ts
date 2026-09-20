@@ -39,7 +39,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   }
   const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
     providers?: Record<string, { baseUrl?: string; authTokenEnv?: string; models?: string[] }>;
-    redaction?: { rules?: { ruleId?: string; pattern?: string; scope?: string }[] }; // scope 为已删除装饰字段：存量条目被忽略（§4.7-1）
+    redaction?: { rules?: { ruleId?: string; pattern?: string; scope?: string }[] }; // scope 为已删除装饰字段：该字段被忽略（§4.7-1，条目本身仍被接受）
     evolution?: { dismissCooldownDays?: number };
   };
   const anthropic = raw.providers?.anthropic;
@@ -57,7 +57,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   }
   const redaction: RedactionPolicy = raw.redaction?.rules
     ? {
-        // §4.7-1（批次四）：scope 装饰字段删除后不再校验——无 scope 的规则被接受（存量兼容），已写 scope 的条目被忽略
+        // §4.7-1（批次四）：scope 装饰字段删除后不再校验——无 scope 的规则被接受（存量兼容），已写 scope 的条目中该字段被忽略（条目仍被接受）
         rules: raw.redaction.rules
           .filter((r): r is { ruleId: string; pattern: string } => typeof r.ruleId === 'string' && typeof r.pattern === 'string')
           .map((r) => ({ ruleId: r.ruleId, pattern: r.pattern })),
