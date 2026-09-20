@@ -231,6 +231,10 @@ function migrate(db: Database.Database): void {
   CREATE INDEX IF NOT EXISTS idx_trace_task ON trace_index(taskId);
   CREATE INDEX IF NOT EXISTS idx_trace_query ON trace_index(agentVersionId, eventType);
   `);
+
+  // 批次三（§4.4-3 / §4.5-4，D-22/D-25）：evolution_candidate 增列——ALTER TABLE 原地支持，零数据回填
+  addColumn(db, 'evolution_candidate', 'derivedVersionIds', `TEXT NOT NULL DEFAULT '[]'`); // 候选↔版本关联（--from-candidate 显式回填）
+  addColumn(db, 'evolution_candidate', 'dismissedAt', `TEXT`); // dismiss 冷却窗起算点（NULL = 未驳回）
 }
 
 /** 幂等 ADD COLUMN（存量库原地升级，零回填） */

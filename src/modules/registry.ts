@@ -377,8 +377,31 @@ export class Registry {
     if (current === versionId) {
       this.cliReject(agentId, versionId, 'rollback 目标即当前指针目标，无迁移发生', who);
     }
+    // §4.5-1（批次三，A-7）：rollback×canary 互斥——防 current==canary 非法态（与 deprecate P2-6 防护对称、消息口径同款）
+    if (this.getCanary(agentId).canaryVersionId === versionId) {
+      this.cliReject(
+        agentId, versionId,
+        '禁止 rollback 至 canary 指针目标版：先 canary clear 或换目标（A5 §1-6 v1.1，P2-6 同规则）',
+        who,
+      );
+    }
     this.setPointer(agentId, versionId);
     this.audit.versionEvent('version_rollback', who, agentId, { agentId, versionId, pointer: { old: current, new: versionId }, operator: who }, versionId);
+  }
+
+  /** §4.5-5/6（批次三，D-24）：evolutionPolicy 回溯解析单一实现——CLI 与测试两处消费本导出。
+   * 回溯遍历 listVersions 全量倒序（版本号从新到旧），不按指针位置、不按版本状态：
+   * 已弃用（Deprecated）版本的 evolutionPolicy 声明仍统治现行策略（Evolution 是 Agent 级资产，
+   * 与 D-14 聚合键=agentId 同向；仅看指针反而会在回滚后静默失效）。
+   * 未声明且无可回溯声明 → null（行为等同不产生候选，并非缺省写入 false）。 */
+  evolutionPolicyOf(agentId: string): import('./evolution.js').EvolutionPolicy | null {
+    for (const v of this.listVersions(agentId).slice().reverse()) {
+      try {
+        const spec = JSON.parse(v.specSnapshot) as { evolutionPolicy?: import('./evolution.js').EvolutionPolicy };
+        if (spec.evolutionPolicy) return spec.evolutionPolicy;
+      } catch { /* 快照损坏跳过（AgentVersion 不可变——防御） */ }
+    }
+    return null;
   }
 
   private requireVersion(agentId: string, versionId: string): SpecRow {

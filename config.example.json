@@ -12,5 +12,9 @@
     "rules": [
       { "ruleId": "email", "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "scope": "payload" }
     ]
+  },
+  "evolution": {
+    "$comment": "可选段（批次三 §4.5-4，D-25）：演进治理运行时配置。dismissCooldownDays = dismiss 冷却窗天数（窗内同 agentId+trigger 不重生候选，到期恢复生成）；缺省 7。",
+    "dismissCooldownDays": 7
   }
 }

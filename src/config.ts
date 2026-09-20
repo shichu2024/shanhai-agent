@@ -15,6 +15,8 @@ export interface RuntimeConfig {
     models: string[]; // 运行时模型白名单（注册准入 ⊆ 校验依据）
   };
   redaction: RedactionPolicy; // 管道不可削（空规则集仍过管道）；规则集内容可裁
+  /** 批次三（§4.5-4，D-25）：演进治理运行时配置（平台层，不进 Spec） */
+  evolution?: { dismissCooldownDays?: number }; // dismiss 冷却窗天数；缺省 7
 }
 
 export class ConfigError extends Error {
@@ -39,6 +41,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
     providers?: Record<string, { baseUrl?: string; authTokenEnv?: string; models?: string[] }>;
     redaction?: { rules?: { ruleId?: string; pattern?: string; scope?: string }[] };
+    evolution?: { dismissCooldownDays?: number };
   };
   const anthropic = raw.providers?.anthropic;
   if (!anthropic?.baseUrl) {
@@ -64,6 +67,12 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   return {
     provider: { name: 'anthropic', baseUrl: anthropic.baseUrl, authToken: token, models: anthropic.models },
     redaction,
+    evolution:
+      raw.evolution?.dismissCooldownDays !== undefined &&
+      Number.isFinite(raw.evolution.dismissCooldownDays) &&
+      raw.evolution.dismissCooldownDays >= 0
+        ? { dismissCooldownDays: raw.evolution.dismissCooldownDays }
+        : undefined,
   };
 }
 

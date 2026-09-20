@@ -14,14 +14,9 @@ function dbOf(rt: Runtime): Database.Database {
   return (rt as unknown as { db: Database.Database }).db;
 }
 
+/** §4.5-6（批次三，D-24）：policiesOf 消费 registry 单一实现（与 CLI 同源——本地手写遍历消亡） */
 function policiesOf(rt: Runtime, agentId: string): { allowed: boolean; triggers?: ('repeated_failure' | 'capability_degradation')[]; failureThreshold?: number } | null {
-  for (const v of rt.registry.listVersions(agentId).slice().reverse()) {
-    try {
-      const spec = JSON.parse(v.specSnapshot) as { evolutionPolicy?: { allowed: boolean; triggers?: ('repeated_failure' | 'capability_degradation')[]; failureThreshold?: number } };
-      if (spec.evolutionPolicy) return spec.evolutionPolicy;
-    } catch { /* skip */ }
-  }
-  return null;
+  return rt.registry.evolutionPolicyOf(agentId);
 }
 
 /** 造一个契约失败任务（Model(schema_violation) 终局，3 attempts） */

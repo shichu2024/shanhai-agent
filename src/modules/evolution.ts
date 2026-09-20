@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { uuid } from '../hash.js';
 import { nowNs } from './traceRecorder.js';
+import { EXCLUDED_FROM_CONTRACT_RATE, evolutionNotInPlaceholders } from './subclassRegistry.js';
 
 // 设计 §4.5 v1.1（D-14）：Evolution Policy（女娲最小形态）——人工确认制。
 // 硬边界（冻结）：系统永不自动注册、自动发布——自动化上限 = 产生带证据链接的候选；
@@ -19,6 +20,10 @@ export interface EvolutionCandidateRow {
   createdAt: string;
   decidedAt: string | null;
   decidedBy: string | null;
+  /** §4.4-3（批次三，D-22）：候选确认后人工起草注册新版本时 CLI --from-candidate 显式回填（JSON 数组，默认 []；不自动关联） */
+  derivedVersionIds: string;
+  /** §4.5-4（批次三，D-25）：dismiss 落库时间——冷却窗（默认 7 天，可配）内同 agentId+trigger 不重生候选 */
+  dismissedAt: string | null;
 }
 
 export interface EvidenceRef {
@@ -35,8 +40,9 @@ export interface EvolutionPolicy {
   guardrails?: { requireReviewed?: true };
 }
 
-/** A4 §4 C2 排除口径同源：infra 类失败不计入 Evolution 聚合（失败模式归因不可信） */
-const EXCLUDED_SUBCLASSES = new Set(['provider_infra', 'provider_rejected_schema']);
+/** A4 §4 C2 排除口径同源：infra 类失败不计入 Evolution 聚合（失败模式归因不可信）——
+ * §4.4-1（批次三）：单一常量源 subclassRegistry（消费点①常量 + ②SQL 参数化，无本地双份） */
+const EXCLUDED_SUBCLASSES = EXCLUDED_FROM_CONTRACT_RATE;
 
 export class EvolutionError extends Error {
   constructor(message: string, readonly code: 'not_found' | 'already_decided' | 'not_open') {
@@ -47,6 +53,8 @@ export class EvolutionError extends Error {
 
 export interface EvolutionDeps {
   db: Database.Database;
+  /** §4.5-4（D-25）：dismiss 冷却窗天数（config.local.json evolution.dismissCooldownDays；缺省 7） */
+  dismissCooldownDays?: number;
 }
 
 export class EvolutionManager {
@@ -55,11 +63,21 @@ export class EvolutionManager {
   /**
    * 惰性聚合（list 时执行，与审批超时惰性判定同一模式）：
    * repeated_failure 按 agentId 聚类——同 subClass 失败 ≥ failureThreshold（默认 3，infra 类不计入）
-   * → 生成 EvolutionCandidate（幂等：同 agentId 同 subClass 已有 open 候选不重复生成），
-   * 并回填 failure_record.evolutionCandidateId（激活预留列）。
+   * → 生成 EvolutionCandidate，并回填 failure_record.evolutionCandidateId（激活预留列）。
+   *
+   * D-14 冻结口径（§4.4-2 批次三成文）：聚合键 = agentId（跨版本），幂等键 = agentId + trigger。
+   * 多 subClass 同超阈值时，第一个子类创建候选，第二个子类证据回填进既有 open 候选
+   * （evidenceRefs 追加）——这是设计语义而非缺陷：候选是 agentId 级演进 backlog，不按 subClass 拆分。
+   *
+   * §4.5-4（批次三，D-25）：dismiss 冷却——同 agentId+trigger 的 dismissed 候选 dismissedAt 在
+   * 冷却窗内（默认 7 天，可配）→ 不重生；到期恢复生成（候选可再出，不静默吞）。
    */
   aggregateRepeatedFailures(policiesOf: (agentId: string) => EvolutionPolicy | null): string[] {
     const { db } = this.deps;
+    const cooldownDays = this.deps.dismissCooldownDays ?? 7;
+    const cooldownCutoff = new Date(Date.now() - cooldownDays * 24 * 3600 * 1000)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, '.000000000Z');
     const created: string[] = [];
     const agents = db.prepare('SELECT DISTINCT agentId FROM failure_record').all() as { agentId: string }[];
     for (const { agentId } of agents) {
@@ -70,10 +88,10 @@ export class EvolutionManager {
       const groups = db
         .prepare(
           `SELECT subClass, COUNT(DISTINCT taskId) AS tasks FROM failure_record
-           WHERE agentId = ? AND subClass NOT IN ('provider_infra','provider_rejected_schema')
+           WHERE agentId = ? AND subClass NOT IN (${evolutionNotInPlaceholders()})
            GROUP BY subClass HAVING tasks >= ?`,
         )
-        .all(agentId, threshold) as { subClass: string; tasks: number }[];
+        .all(agentId, ...EXCLUDED_FROM_CONTRACT_RATE, threshold) as { subClass: string; tasks: number }[];
       for (const group of groups) {
         const existingOpen = db
           .prepare(`SELECT candidateId FROM evolution_candidate WHERE agentId = ? AND trigger = 'repeated_failure' AND status = 'open'`)
@@ -85,12 +103,24 @@ export class EvolutionManager {
                WHERE agentId = ? AND subClass = ? ORDER BY occurredAt LIMIT 50`,
             )
             .all(agentId, group.subClass) as EvidenceRef[]
-        ).filter((r) => !EXCLUDED_SUBCLASSES.has(r.subClass));
+        ).filter((r) => !(EXCLUDED_SUBCLASSES as readonly string[]).includes(r.subClass));
         if (existingOpen) {
           // 幂等：open 候选存在 → 只同步 evidenceRefs（追加新证据）与回填
           this.backfill(existingOpen.candidateId, refs);
           continue;
         }
+        // §4.5-4 dismiss 冷却：同 agentId+trigger 窗内已 dismissed → 跳过（到期自然恢复生成）；
+        // cooldownDays = 0 → 冷却关闭（即时允许重生——运行时配置边界）
+        const inCooldown =
+          cooldownDays > 0
+            ? db
+                .prepare(
+                  `SELECT 1 FROM evolution_candidate
+                   WHERE agentId = ? AND trigger = 'repeated_failure' AND status = 'dismissed' AND dismissedAt > ?`,
+                )
+                .get(agentId, cooldownCutoff)
+            : undefined;
+        if (inCooldown) continue;
         const candidateId = uuid();
         const tx = db.transaction(() => {
           db.prepare(
@@ -131,12 +161,32 @@ export class EvolutionManager {
     return this.get(candidateId)!;
   }
 
-  /** 人工驳回（演进 backlog 管理，与 confirm 对称） */
+  /** 人工驳回（演进 backlog 管理，与 confirm 对称）；§4.5-4：dismissedAt 落库（冷却窗起算点） */
   dismiss(candidateId: string, who: string): EvolutionCandidateRow {
     const row = this.requireOpen(candidateId);
+    const at = nowNs();
     this.deps.db
-      .prepare(`UPDATE evolution_candidate SET status='dismissed', decidedAt = ?, decidedBy = ? WHERE candidateId = ?`)
-      .run(nowNs(), who, candidateId);
+      .prepare(`UPDATE evolution_candidate SET status='dismissed', dismissedAt = ?, decidedAt = ?, decidedBy = ? WHERE candidateId = ?`)
+      .run(at, at, who, candidateId);
+    return this.get(candidateId)!;
+  }
+
+  /** §4.4-3（D-22）：候选↔版本关联显式回填——人工起草注册新版本时 CLI --from-candidate 调用（幂等，不自动关联） */
+  attachDerivedVersion(candidateId: string, versionId: string): EvolutionCandidateRow {
+    const row = this.get(candidateId);
+    if (!row) throw new EvolutionError(`演进候选不存在：${candidateId}`, 'not_found');
+    let ids: string[];
+    try {
+      ids = JSON.parse(row.derivedVersionIds ?? '[]') as string[];
+      if (!Array.isArray(ids)) ids = [];
+    } catch {
+      ids = []; // 存量异常形态（防御）：视为空数组，不炸回填
+    }
+    if (!ids.includes(versionId)) {
+      this.deps.db
+        .prepare(`UPDATE evolution_candidate SET derivedVersionIds = ? WHERE candidateId = ?`)
+        .run(JSON.stringify([...ids, versionId]), candidateId);
+    }
     return this.get(candidateId)!;
   }
 

@@ -8,8 +8,11 @@ export interface GroupStats {
   assignmentSource: 'stable' | 'canary' | 'explicit' | 'unattributed';
   tasks: number;
   succeeded: number;
+  /** §4.5-2（批次三，D-23）：治理性取消计数（口径可见、可复算）——cancelled 是治理决策非质量信号 */
+  excludedCancelled: number;
   contractFailures: number; // 计入契约失败率的任务数（A4 §1 口径物化列）
-  contractPassRate: number | null; // tasks=0 → null（无分母不假装）
+  /** §4.5-2（D-23）：分母 = tasks − cancelled；分母零（全为治理性取消）→ null（无分母不假装） */
+  contractPassRate: number | null;
 }
 
 export interface ToolUpgradeAffectedSpec {
@@ -34,6 +37,13 @@ export interface ReportAnswer {
     approvalTimeoutCount: number; // 治理惰性信号（P3-1）：不进 C2 失败率，但必须可见
     toolUpgradeAffectedSpecs: ToolUpgradeAffectedSpec[]; // R-5：Spec 声明等级 < 当前登记等级的存量引用清单
     stale: { queued: number; paused: number }; // staleQueued/stalePaused 只读汇总
+    /** §4.5-3（批次三）：跨轮灰度混叠警示列（可见性方案，不自动切窗——决定留人） */
+    canaryRounds: {
+      /** 判据窗口内的轮次边界事件（canary_configured / version_promoted / version_rollback 审计序列切轮） */
+      boundaryEvents: { eventType: string; whenAt: string }[];
+      /** 窗口跨轮 → 'window-straddles-rounds'（操作者自行 --since 收窗）；否则 null */
+      warning: 'window-straddles-rounds' | null;
+    };
   };
   /** 批次四 DoD-①（设计 §4.8，D-15）：OTel 条件监测健康面板——只读指标 + 触发判定，不做常驻接入 */
   healthPanel: OtelHealthPanel;
@@ -101,10 +111,11 @@ export function buildAgentReport(
     const row = db
       .prepare(
         `SELECT COUNT(*) AS tasks,
-                SUM(CASE WHEN t.status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded
+                SUM(CASE WHEN t.status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
+                SUM(CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
          FROM task_record t WHERE t.agentId = ? AND t.assignmentSource = ? ${since ? 'AND t.createdAt >= ?' : ''}`,
       )
-      .get(...(since ? [agentId, source, since] : [agentId, source])) as { tasks: number; succeeded: number | null };
+      .get(...(since ? [agentId, source, since] : [agentId, source])) as { tasks: number; succeeded: number | null; cancelled: number | null };
     const contractFailures = (
       db
         .prepare(
@@ -115,38 +126,51 @@ export function buildAgentReport(
         .get(...(since ? [agentId, source, since] : [agentId, source])) as { c: number }
     ).c;
     const tasks = row.tasks ?? 0;
+    const cancelled = row.cancelled ?? 0;
+    const denominator = tasks - cancelled; // §4.5-2（D-23）：治理性取消不进分母
     groups.push({
       assignmentSource: source,
       tasks,
       succeeded: row.succeeded ?? 0,
+      excludedCancelled: cancelled,
       contractFailures,
-      contractPassRate: tasks > 0 ? (tasks - contractFailures) / tasks : null,
+      contractPassRate: denominator > 0 ? (denominator - contractFailures) / denominator : null,
     });
   }
 
   const stable = groups.find((g) => g.assignmentSource === 'stable')!;
   const canary = groups.find((g) => g.assignmentSource === 'canary')!;
+  const canaryDenominator = canary.tasks - canary.excludedCancelled;
   const canaryPointer = (
     db.prepare('SELECT canaryVersionId FROM agent WHERE agentId = ?').get(agentId) as { canaryVersionId: string | null } | undefined
   )?.canaryVersionId ?? null;
 
   let criteria: ReportAnswer['promoteCriteria'];
   if (!canaryPointer) {
-    criteria = { status: 'no-canary', canaryPassRate: canary.contractPassRate, stablePassRate: stable.contractPassRate, canarySample: canary.tasks, threshold: `无灰度进行中（canary 指针为空）` };
-  } else if (canary.tasks < PROMOTE_SAMPLE_MIN) {
+    criteria = { status: 'no-canary', canaryPassRate: canary.contractPassRate, stablePassRate: stable.contractPassRate, canarySample: canaryDenominator, threshold: `无灰度进行中（canary 指针为空）` };
+  } else if (canaryDenominator === 0) {
+    // §4.5-2 分母零基线（D-23）：小组全为治理性取消 → 无质量信号分母，不假装给答案
     criteria = {
       status: 'insufficient-sample',
       canaryPassRate: canary.contractPassRate,
       stablePassRate: stable.contractPassRate,
-      canarySample: canary.tasks,
-      threshold: `金丝雀样本 ${canary.tasks} < ${PROMOTE_SAMPLE_MIN}——数据不足，系统不假装给了答案`,
+      canarySample: canaryDenominator,
+      threshold: `金丝雀分母为 0（${canary.tasks} 任务全为治理性取消，excludedCancelled=${canary.excludedCancelled}）——无质量信号，系统不假装给了答案`,
     };
-  } else if (stable.tasks === 0 || stable.contractPassRate === null) {
+  } else if (canaryDenominator < PROMOTE_SAMPLE_MIN) {
+    criteria = {
+      status: 'insufficient-sample',
+      canaryPassRate: canary.contractPassRate,
+      stablePassRate: stable.contractPassRate,
+      canarySample: canaryDenominator,
+      threshold: `金丝雀样本 ${canaryDenominator} < ${PROMOTE_SAMPLE_MIN}——数据不足，系统不假装给了答案`,
+    };
+  } else if (stable.tasks - stable.excludedCancelled === 0 || stable.contractPassRate === null) {
     criteria = {
       status: 'insufficient-sample',
       canaryPassRate: canary.contractPassRate,
       stablePassRate: null,
-      canarySample: canary.tasks,
+      canarySample: canaryDenominator,
       threshold: `stable 基线样本为 0——无对照组数据，系统不假装给了答案（先在 stable 组积累任务）`,
     };
   } else {
@@ -155,7 +179,7 @@ export function buildAgentReport(
       status: ok ? 'promote-recommended' : 'below-threshold',
       canaryPassRate: canary.contractPassRate,
       stablePassRate: stable.contractPassRate,
-      canarySample: canary.tasks,
+      canarySample: canaryDenominator,
       threshold: `判据：金丝雀契约通过率 ≥ stable − ${PROMOTE_DROP_TOLERANCE * 100}pp 且样本 ≥ ${PROMOTE_SAMPLE_MIN}（机械输出，决定权留人）`,
     };
   }
@@ -185,6 +209,19 @@ export function buildAgentReport(
       .get(new Date(Date.now() + 1000).toISOString().replace(/\.\d{3}Z$/, '.999999999Z')) as { c: number }
   ).c;
 
+  // §4.5-3（批次三）：跨轮灰度混叠警示列——按 canary_configured / version_promoted / version_rollback
+  // 审计事件序列切轮；判据窗口（--since 起，缺省全史）内存在边界事件 → 跨轮警示 + 边界时间戳。
+  // 不自动切窗：窗口裁剪权恒在操作者（--since 收窗），决定留人（D-12/D-14 精神外推）。
+  const boundaryEvents = (
+    db
+      .prepare(
+        `SELECT eventType, whenAt FROM audit_events
+         WHERE target = ? AND eventType IN ('canary_configured','version_promoted','version_rollback') ${since ? 'AND whenAt >= ?' : ''}
+         ORDER BY whenAt`,
+      )
+      .all(...(since ? [agentId, since] : [agentId])) as { eventType: string; whenAt: string }[]
+  );
+
   return {
     agentId,
     since,
@@ -194,6 +231,10 @@ export function buildAgentReport(
       approvalTimeoutCount,
       toolUpgradeAffectedSpecs,
       stale: { queued: staleQueued, paused: stalePaused },
+      canaryRounds: {
+        boundaryEvents,
+        warning: boundaryEvents.length > 0 ? 'window-straddles-rounds' : null,
+      },
     },
     healthPanel: healthPanelRef,
   };

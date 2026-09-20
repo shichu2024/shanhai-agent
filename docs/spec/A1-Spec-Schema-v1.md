@@ -61,10 +61,12 @@
 
 | 字段 | 类型 | 必填 | 默认 | 约束 |
 |---|---|---|---|---|
-| `allowed` | boolean | 是 | — | false 等价缺省（不产生演进候选） |
+| `allowed` | boolean | 是 | — | **未声明且无可回溯声明 → 不产生演进候选**（见下方回溯语义注记，并非缺省写入 false） |
 | `triggers` | string[] | 否 | `["repeated_failure"]` | 枚举子集：`repeated_failure` / `capability_degradation`（白泽 degraded 记忆关联） |
 | `failureThreshold` | integer | 否 | 3 | ≥1；聚合键 = **agentId**（跨版本），evidenceRefs 回链具体 agentVersionId |
 | `guardrails.requireReviewed` | boolean | 否 | **true（强制不可关）** | 注册校验拒绝任何显式 `false`；演进产物必须经 A5 review 检视门（变更面受控）才可发布 |
+
+**回溯语义（v1.2 注记，D-24 冻结，批次三成文）：** 策略解析 = Registry 单一实现 `evolutionPolicyOf`（CLI 与测试两处消费同一导出）。回溯遍历 `listVersions` 全量倒序（版本号从新到旧），**不按指针位置、不按版本状态**——即**已弃用（Deprecated）版本的 evolutionPolicy 声明仍统治现行策略**。理由：Evolution 是 Agent 级资产，与聚合键=agentId 同向；仅看当前指针版本反而会在指针回滚后突然静默失效。「缺省=allowed:false」的准确表述：**未声明且无可回溯声明**时行为等同 allowed:false（不产生候选）——并非缺省写入 false。
 
 **硬边界（冻结）：** 系统永不自动注册、自动发布——自动化的上限是产生带证据链接的 EvolutionCandidate；变更本体永远人工起草（不可变底线外推）。
 

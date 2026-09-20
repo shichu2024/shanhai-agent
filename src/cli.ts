@@ -19,7 +19,7 @@ function usage(): never {
   console.log(`shanhai — 山海司 Runtime CLI（第一阶段 + 第二阶段批次一：审批 / Reviewed / 中止）
 
 用法：
-  shanhai agent register <spec.json> [--by <who>]
+  shanhai agent register <spec.json> [--by <who>] [--from-candidate <candidateId>]   （候选↔版本关联显式回填）
   shanhai agent release <agentId> <versionId> [--no-pointer] [--by <who>]
   shanhai agent review <agentId> <versionId> [--by <who>]          （Draft→Reviewed，diff 检视清单逐项确认）
   shanhai agent deprecate <agentId> <versionId> [--by <who>]
@@ -66,7 +66,14 @@ async function main(): Promise<void> {
         if (!file || !existsSync(file)) usage();
         const spec = JSON.parse(readFileSync(file, 'utf8'));
         const versionId = rt.registry.registerSpec(spec, by, validationDeps(rt));
-        console.log(JSON.stringify({ ok: true, versionId }, null, 2));
+        // §4.4-3（批次三，D-22）：--from-candidate 显式回填候选↔版本关联（不自动关联——决定留人）
+        const fromCandidate = flagValue(rest, '--from-candidate');
+        if (fromCandidate) {
+          const row = rt.evolutions.attachDerivedVersion(fromCandidate, versionId);
+          console.log(JSON.stringify({ ok: true, versionId, derivedFromCandidate: fromCandidate, derivedVersionIds: JSON.parse(row.derivedVersionIds) }, null, 2));
+        } else {
+          console.log(JSON.stringify({ ok: true, versionId }, null, 2));
+        }
       } else if (sub === 'release') {
         const [agentId, versionId] = pos;
         if (!agentId || !versionId) usage();
@@ -240,16 +247,8 @@ async function main(): Promise<void> {
       break;
     }
     case 'evolution': {
-      const policiesOf = (agentId: string): { allowed: boolean; triggers?: ('repeated_failure' | 'capability_degradation')[]; failureThreshold?: number } | null => {
-        const versions = rt.registry.listVersions(agentId);
-        for (const v of versions.slice().reverse()) {
-          try {
-            const spec = JSON.parse(v.specSnapshot) as { evolutionPolicy?: { allowed: boolean; triggers?: ('repeated_failure' | 'capability_degradation')[]; failureThreshold?: number } };
-            if (spec.evolutionPolicy) return spec.evolutionPolicy;
-          } catch { /* 快照损坏跳过 */ }
-        }
-        return null;
-      };
+      // §4.5-6（批次三，D-24）：policiesOf 消费 registry 单一实现（回溯全量倒序，已弃用版本声明仍统治）
+      const policiesOf = (agentId: string) => rt.registry.evolutionPolicyOf(agentId);
       if (sub === 'list') {
         rt.evolutions.aggregateRepeatedFailures(policiesOf); // 惰性聚合（F-6）
         console.log(JSON.stringify(rt.evolutions.list(), null, 2));
