@@ -2,8 +2,8 @@ import type Database from 'better-sqlite3';
 import { uuid } from '../hash.js';
 import { nowNs } from './traceRecorder.js';
 import { redactString, redactValue, type RedactionPolicy } from './redaction.js';
+import { CONTRACT_RATE_SUBCLASSES } from './subclassRegistry.js';
 import {
-  CONTRACT_RATE_SUBCLASSES,
   type AuditEventType,
   type FailureClass,
   type FailureSubClass,
@@ -54,7 +54,7 @@ export class FailureRecorder {
         input.reasonCode ?? null,
         redactString(input.message, this.redaction),
         JSON.stringify(redactValue(input.expectedVsActual, this.redaction)),
-        CONTRACT_RATE_SUBCLASSES.has(input.subClass) ? 1 : 0,
+        CONTRACT_RATE_SUBCLASSES.includes(input.subClass) ? 1 : 0,
         nowNs(),
         input.traceRef ?? null,
       );

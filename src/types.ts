@@ -61,20 +61,8 @@ export type FailureSubClass =
   // Output
   | 'ContractViolation';
 
-// A4 §1「计入契约失败率」口径：仅此子类计数；provider_infra / provider_rejected_schema 显式排除
-export const CONTRACT_RATE_SUBCLASSES: ReadonlySet<FailureSubClass> = new Set([
-  'unparseable_output',
-  'schema_violation',
-  'enum_violation',
-  'format_violation',
-  'truncation',
-  'ContractViolation',
-]);
-
-export const EXCLUDED_FROM_CONTRACT_RATE: ReadonlySet<FailureSubClass> = new Set([
-  'provider_infra',
-  'provider_rejected_schema',
-]);
+// A4 §1「计入契约失败率」口径：单一常量源已迁至 modules/subclassRegistry.ts（§4.4-1，批次三同源化）——
+// CONTRACT_RATE_SUBCLASSES（6 项白名单）与 EXCLUDED_FROM_CONTRACT_RATE（排除集）自那里导出。
 
 // A2 §5 reasonCode 封闭集（budget_exhausted 已按 P2-1 删除——预算终局唯一归因 Runtime(BudgetExceeded)）
 export type PolicyReasonCode =

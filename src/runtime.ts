@@ -27,6 +27,8 @@ export interface RuntimeOptions {
   redaction?: RedactionPolicy;
   /** v1.1（A5 §4a）：灰度分派随机源（测试注入确定性；缺省 = 随机） */
   dispatchRoll?: () => number;
+  /** 批次三（§4.5-4，D-25）：dismiss 冷却窗天数（config.local.json evolution 段；缺省 7） */
+  evolutionDismissCooldownDays?: number;
 }
 
 export class Runtime {
@@ -49,7 +51,7 @@ export class Runtime {
     const redaction = opts.redaction ?? defaultRedactionPolicy();
     this.trace = new TraceRecorder(handles.db, handles.tracesDir, redaction);
     this.memories = new MemoryManager({ db: handles.db, trace: this.trace, redaction }); // 同一 redactionPolicy（前置不可削依赖）
-    this.evolutions = new EvolutionManager({ db: handles.db });
+    this.evolutions = new EvolutionManager({ db: handles.db, dismissCooldownDays: opts.evolutionDismissCooldownDays });
     // 批次二（§4.2 DB 侧脱敏）：四落盘面（task_record.input / pause_snapshot.contextJson / notes.md /
     // failure+audit 明细）全部入库前过同一 redaction 实例——与 Trace/记忆共用（§9.1-3 双写一致性）。
     this.failures = new FailureRecorder(handles.db, redaction);
@@ -90,6 +92,7 @@ export class Runtime {
       provider: buildProviderFromConfig(config),
       whitelist: modelWhitelistOf(config),
       redaction: config.redaction,
+      evolutionDismissCooldownDays: config.evolution?.dismissCooldownDays,
     });
   }
 
