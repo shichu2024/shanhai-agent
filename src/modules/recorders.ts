@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { uuid } from '../hash.js';
 import { nowNs } from './traceRecorder.js';
+import { redactString, redactValue, type RedactionPolicy } from './redaction.js';
 import {
   CONTRACT_RATE_SUBCLASSES,
   type AuditEventType,
@@ -27,7 +28,11 @@ export interface FailureRecordInput {
 }
 
 export class FailureRecorder {
-  constructor(private readonly db: Database.Database) {}
+  constructor(
+    private readonly db: Database.Database,
+    /** 批次二（§4.2）：message/expectedVsActual 入库前过同一 redaction 实例（*Digest/*Hash 排除表零改写） */
+    private readonly redaction: RedactionPolicy,
+  ) {}
 
   record(input: FailureRecordInput): string {
     const recordId = uuid();
@@ -47,8 +52,8 @@ export class FailureRecorder {
         input.failureClass,
         input.subClass,
         input.reasonCode ?? null,
-        input.message,
-        JSON.stringify(input.expectedVsActual),
+        redactString(input.message, this.redaction),
+        JSON.stringify(redactValue(input.expectedVsActual, this.redaction)),
         CONTRACT_RATE_SUBCLASSES.has(input.subClass) ? 1 : 0,
         nowNs(),
         input.traceRef ?? null,
@@ -84,7 +89,11 @@ export interface AuditContext {
 
 /** 审计流写入（A6 §4 RejectedRequest + §5 版本事件） */
 export class AuditRecorder {
-  constructor(private readonly db: Database.Database) {}
+  constructor(
+    private readonly db: Database.Database,
+    /** 批次二（§4.2）：rejectReason 入库前过同一 redaction 实例（JSON 结构级——解析后过管道，不做字符串级正则） */
+    private readonly redaction: RedactionPolicy,
+  ) {}
 
   versionEvent(
     eventType: AuditEventType,
@@ -121,8 +130,17 @@ export class AuditRecorder {
         nowNs(),
         input.target,
         input.inputHash,
-        input.rejectReason,
+        this.redactReason(input.rejectReason),
         input.agentVersionId ?? null,
       );
+  }
+
+  /** rejectReason 恒为 JSON（issues 数组）：解析后过管道再序列化；解析失败退化为字符串级管道 */
+  private redactReason(reason: string): string {
+    try {
+      return JSON.stringify(redactValue(JSON.parse(reason), this.redaction));
+    } catch {
+      return redactString(reason, this.redaction);
+    }
   }
 }

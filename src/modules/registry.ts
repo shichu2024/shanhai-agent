@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { contentHash, sha256Hex, uuid } from '../hash.js';
 import { nowNs } from './traceRecorder.js';
 import { AuditRecorder } from './recorders.js';
+import type { RedactionPolicy } from './redaction.js';
 import { validateRegistration, type ValidationDeps } from './specValidator.js';
 import type { RiskLevel, VersionStatus } from '../types.js';
 
@@ -46,8 +47,8 @@ export const REVIEW_ITEMS = ['tools', 'budgets', 'mission', 'approvalPolicy', 'c
 export class Registry {
   readonly audit: AuditRecorder;
 
-  constructor(private readonly db: Database.Database) {
-    this.audit = new AuditRecorder(db);
+  constructor(private readonly db: Database.Database, redaction: RedactionPolicy) {
+    this.audit = new AuditRecorder(db, redaction); // 批次二（§4.2）：同实例注入（spec 拒绝面 rejectReason 过管道）
   }
 
   // ---------- Tool Registry（A2 附录 A） ----------

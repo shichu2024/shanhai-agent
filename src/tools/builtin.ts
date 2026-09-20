@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { ToolImpl } from '../modules/toolExecutor.js';
+import { defaultRedactionPolicy, redactString, type RedactionPolicy } from '../modules/redaction.js';
 
 // 内置工具（A2 附录 A：kind=builtin，进程内函数；implVersion 与代码 commit 关联）
 // C1 真实业务只读任务载体：docs-list / docs-read（对本仓库 docs/ 做只读分析）。
@@ -80,7 +81,7 @@ function safeResolve(root: string, rel: string): string | null {
   return resolved;
 }
 
-export function createBuiltinImpls(repoRoot: string): Map<string, ToolImpl> {
+export function createBuiltinImpls(repoRoot: string, redaction: RedactionPolicy = defaultRedactionPolicy()): Map<string, ToolImpl> {
   const impls = new Map<string, ToolImpl>();
   const docsRoot = path.resolve(repoRoot, 'docs');
 
@@ -100,7 +101,9 @@ export function createBuiltinImpls(repoRoot: string): Map<string, ToolImpl> {
   });
 
   impls.set('note-append', (args) => {
-    const note = typeof args.note === 'string' ? args.note : '';
+    // 批次二（§4.2）：工具副作用输出过管道后再追加（data/ 属本地数据域——写入即脱敏）。
+    // 同一 redaction 实例由组合根注入（缺省 = 默认规则集，管道不可削）。
+    const note = redactString(typeof args.note === 'string' ? args.note : '', redaction);
     const notesDir = path.join(repoRoot, 'data');
     mkdirSync(notesDir, { recursive: true });
     appendFileSync(path.join(notesDir, 'notes.md'), `- ${new Date().toISOString()} ${note}\n`, 'utf8');

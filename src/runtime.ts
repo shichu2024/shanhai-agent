@@ -50,12 +50,14 @@ export class Runtime {
     this.trace = new TraceRecorder(handles.db, handles.tracesDir, redaction);
     this.memories = new MemoryManager({ db: handles.db, trace: this.trace, redaction }); // 同一 redactionPolicy（前置不可削依赖）
     this.evolutions = new EvolutionManager({ db: handles.db });
-    this.failures = new FailureRecorder(handles.db);
-    this.audit = new AuditRecorder(handles.db);
-    this.registry = new Registry(handles.db);
+    // 批次二（§4.2 DB 侧脱敏）：四落盘面（task_record.input / pause_snapshot.contextJson / notes.md /
+    // failure+audit 明细）全部入库前过同一 redaction 实例——与 Trace/记忆共用（§9.1-3 双写一致性）。
+    this.failures = new FailureRecorder(handles.db, redaction);
+    this.audit = new AuditRecorder(handles.db, redaction);
+    this.registry = new Registry(handles.db, redaction);
     this.state = new StateManager(handles.db, this.trace, this.failures);
     this.gateway = new ModelGateway(opts.provider, opts.whitelist);
-    this.toolImpls = createBuiltinImpls(opts.repoRoot);
+    this.toolImpls = createBuiltinImpls(opts.repoRoot, redaction);
     this.approvals = new ApprovalManager({
       db: handles.db,
       trace: this.trace,
@@ -74,6 +76,7 @@ export class Runtime {
       approvals: this.approvals,
       memories: this.memories,
       dispatchRoll: opts.dispatchRoll,
+      redaction,
     });
     Object.defineProperty(this, 'db', { value: handles.db });
   }

@@ -18,8 +18,9 @@ export interface RedactionPolicy {
 /** 信封 10 字段（A6 §2）：属主 = TraceRecorder（结构承载，payload 携带同名键即剥离，见 STRIP_AT_ENTRY） */
 const ENVELOPE_KEYS = new Set(['eventId', 'timestamp', 'traceId', 'taskId', 'agentId', 'agentVersionId', 'specContentHash', 'eventType', 'callNo', 'callKind', 'attemptNo']);
 
-/** 排除表键名（A6 §8 机制 1）：零改写（walk 不递归改写其值）——含合法载荷键 bindingSnapshot 与全部 *Digest 字段 */
-const EXCLUDED_KEY_SUFFIX = /Digest$/;
+/** 排除表键名（A6 §8 机制 1）：零改写（walk 不递归改写其值）——含合法载荷键 bindingSnapshot 与全部 *Digest/*Hash 字段。
+ * *Hash 后缀为批次二 §4.7-③ 扩展：DB 落盘面（inputHash/contentHash 等）与 Trace 摘要字段面同构适用。 */
+const EXCLUDED_KEY_SUFFIX = /(Digest|Hash)$/;
 const EXCLUDED_KEYS = new Set([...ENVELOPE_KEYS, 'bindingSnapshot']);
 
 /** P3-①（批次二反方遗留）：信封同名键入口剥离——payload 携带的信封键/redacted 键在脱敏前剥除，
@@ -56,17 +57,31 @@ export function redactEventPayload(payload: Record<string, unknown>, policy: Red
   for (const [k, v] of Object.entries(payload)) {
     if (!STRIP_AT_ENTRY.has(k)) stripped[k] = v; // P3-①：信封同名键/redacted 键剥离（不进载荷、不进摘要）
   }
-  const compiled = policy.rules.map((r) => {
+  const compiled = compileRules(policy);
+  const counts = new Map<string, number>();
+  const out = walk(stripped, compiled, counts, false) as Record<string, unknown>;
+  const redacted = [...counts.entries()].filter(([, n]) => n > 0).map(([ruleId, count]) => ({ ruleId, count }));
+  return { payload: out, redacted };
+}
+
+function compileRules(policy: RedactionPolicy): { ruleId: string; re: RegExp }[] {
+  return policy.rules.map((r) => {
     try {
       return { ruleId: r.ruleId, re: new RegExp(r.pattern, 'g') };
     } catch {
       return null; // 非法正则规则跳过（不炸管道；配置错误由摘要缺位体现）
     }
   }).filter((x): x is { ruleId: string; re: RegExp } => x !== null);
-  const counts = new Map<string, number>();
-  const out = walk(stripped, compiled, counts, false) as Record<string, unknown>;
-  const redacted = [...counts.entries()].filter(([, n]) => n > 0).map(([ruleId, count]) => ({ ruleId, count }));
-  return { payload: out, redacted };
+}
+
+/** 批次二（§4.2 DB 侧脱敏）：字符串级管道复用入口——与事件载荷同一规则编译与排除表语义 */
+export function redactString(s: string, policy: RedactionPolicy): string {
+  return walk(s, compileRules(policy), new Map<string, number>(), false) as string;
+}
+
+/** 批次二（§4.2 DB 侧脱敏）：结构级管道复用入口——对解析后结构递归过管道（排除表键零改写，结构与消息数不变） */
+export function redactValue(value: unknown, policy: RedactionPolicy): unknown {
+  return walk(value, compileRules(policy), new Map<string, number>(), false);
 }
 
 function walk(
