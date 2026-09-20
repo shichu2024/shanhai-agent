@@ -14,7 +14,7 @@ npm install
 npm run build
 cp config.example.json config.local.json   # 按需修改 baseUrl / 模型白名单
 export SHANHAI_ANTHROPIC_AUTH_TOKEN=<你的密钥>   # T3：密钥仅环境变量注入，仓库只留占位
-npm test                                    # 129 项测试（54 第一阶段存量 + 批次一 34 + 批次二 24 + 批次三 17：记忆/Evolution/脱敏加固/迁移）
+npm test                                    # 139 项测试（54 第一阶段存量 + 三批次 75 + 批次四 10：OTel 面板/T3 机制化/resume 重建注入）
 ```
 
 ## CLI（A5 §2 命令表）
@@ -77,6 +77,12 @@ npm run cli -- evolution list                            # 候选清单（顺带
 npm run cli -- evolution confirm <candidateId> [--proposed-change <text>]
 # 产物路径（人工起草）：register → review（检视门）→ release --no-pointer → canary set → promote
 ```
+
+## 第二阶段批次四（可观测与发布安全机制化 · 收官批）
+
+- **OTel 条件监测**（§4.8，D-15）：`agent report` 旁挂只读健康面板（Trace 事件/文件数 + T1 单查询 P95 实测 + 触发判定）——条件触发模型，无后台进程，真源单一性不变；
+- **T3 扫描清单配置化**：密钥正则/权重扩展名/魔数清单入 `ScanConfig`（config.local.json `scan` 段可覆盖，可审计）+ **safetensors 真实样本结构嗅探**（8B LE headerLen + JSON header）+ 测试夹具豁免规则（`tests/fixtures/positive-controls` 阳性对照，豁免入配置带理由）；
+- **resume 重建记忆注入**（v1.2 修订，决策官 P3 裁决）：续跑段按快照冻结 memoryPolicy + 重建时刻 active 集重建注入——注入语义覆盖任务全程（A1 §2.1 / A3 §2 v1.2 注记随批提交）。
 
 ## 模块地图（src/）
 

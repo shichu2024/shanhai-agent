@@ -154,13 +154,6 @@ describe('DoD-② degraded 触发 + 恢复边（含基线同事务写入）', ()
     mem = h.rt.memories.get(mem.memoryId)!;
     expect(mem.status).toBe('active'); // 恢复边
     expect(mem.evidenceCountAtLastTransition).toBe(4); // 基线随迁移同事务更新
-
-    // degraded 注入时带标记
-    // （由 memory_loaded 事件回看：第 3、4 任务注入 status=degraded）
-    const loadedStatuses = h.rt.trace.readEvents(
-      (dbOf(h.rt).prepare(`SELECT taskId FROM task_record WHERE agentId='mm-deg' ORDER BY createdAt DESC LIMIT 1`).get() as { taskId: string }).taskId,
-    ).filter((e) => e.eventType === 'memory_loaded');
-    void loadedStatuses;
   });
 
   it('degraded 注入带 degraded 标记（文本含「存在反例」警示）', async () => {

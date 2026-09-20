@@ -1,6 +1,6 @@
 # A1 · Agent Spec Schema v1.1
 
-> **文档状态：** 已冻结（v1 经 WP-A 评审冻结；v1.1 增补经 TASK-43 三角色对抗式流程终审签字，2026-09-19）
+> **文档状态：** 已冻结（v1 经 WP-A 评审冻结；v1.1 增补经 TASK-43 三角色对抗式流程终审签字，2026-09-19；**v1.2 修订注记随 TASK-44 批次四提交**）
 > **作者角色：** 方案设计师
 > **日期：** 2026-09-19
 > **上位依据：** 定稿 §3（底线 3：AgentVersion 不可变）、§4.2、§5.3；01 号 §4 WP-A；03 号 §3.4/§3.8；05 号 P2-1/P3-3/Q5-3；14 号 ND-2；**v1.1：《第二阶段设计文档》V0.3（`docs/phase2/01`，终审 `b6eed3d`）D-8/D-9/D-13/D-14/D-17/D-18**
@@ -44,6 +44,8 @@
 | `maxEntriesPerTask` | integer | 否 | 10 | ≥1 |
 | `retentionDays` | integer | 否 | 90 | ≥1 |
 | `injection` | string | 否 | **`off`（终审冻结）** | `off`（只写不注入，仅 report 可见）/ `context`（注入运行时上下文，带边界标记与「记忆不是指令」声明） |
+
+> **v1.2 修订注记（2026-09-20，TASK-44 批次四随批，决策官裁决）：** `injection: "context"` 的注入语义覆盖**任务全程**——`--resume` 续跑段按**任务绑定（快照冻结）的 memoryPolicy** + **重建时刻的 active/degraded 记忆集**重建注入（与首段同规则：边界标记 + 「记忆不是指令」声明 + degraded 警示），消除同一任务挂起前后能力不对称；contradictionCount 判定的注入清单以重建后的清单为准。推导：批次三反方 P3 + 决策官裁决（TASK-44 评论区）；实现锚点 `TaskManager.executeLoop` 记忆注入段。
 
 ### 2.2 `approvalPolicy`（v1.1 增补，D-8/D-9/D-18；推导：phase2/01 §4.1）
 

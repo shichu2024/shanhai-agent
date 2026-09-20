@@ -1,6 +1,6 @@
 # A3 · Task 生命周期状态机（attempt 模型）
 
-> **文档状态：** 已冻结（v1 经 WP-A 评审冻结 + TASK-40 F-1 修订；v1.1 增补经 TASK-43 三角色对抗式流程终审签字，2026-09-19）
+> **文档状态：** 已冻结（v1 经 WP-A 评审冻结 + TASK-40 F-1 修订；v1.1 增补经 TASK-43 三角色对抗式流程终审签字，2026-09-19；**v1.2 修订注记随 TASK-44 批次四提交**）
 > **作者角色：** 方案设计师
 > **日期：** 2026-09-19
 > **上位依据：** 定稿 §5.1（冻结）；03 号 §3.2（迁移表原文，本表为其规格化）；05 号 P1-1/P1-2/备注-3；01 号 §5.1/§5.3–5.4；**v1.1：《第二阶段设计文档》V0.3（`docs/phase2/01`）D-8/D-9/D-13/D-16/D-18 + 终审 R-1/R-4**
@@ -36,7 +36,7 @@
 | `Queued → Cancelled` | 用户取消（等待中，无副作用；**v1.1：abort 到达亦立即**） | TaskRecord + Trace(TaskCancelled) | — |
 | `Running → Running`（新 attempt） | 调用级失败/超时且**该逻辑调用的** `attemptNo(callNo, kind) < maxAttempts`（计数粒度见 A2 §2.1：调用键 = callNo × kind，判定用调用级计数器，不落 TaskRecord） | Trace(AttemptFailed，含 callNo/callKind/attemptNo) + TaskRecord.attemptCount 聚合展示更新 | Model / Tool（attempt 级，不计任务失败） |
 | **`Running → Paused`（v1.1）** | L3 工具请求且 approvalPolicy.mode=onHighRisk：写 PauseSnapshot（先持久化，§5a）→ 写 ApprovalRequest（§5）→ 迁移 → **run 进程正常退出**（exit code 提示待审批） | PauseSnapshot + ApprovalRequest + TaskRecord + Trace(TaskPaused/ApprovalRequested) | — |
-| **`Paused → Running`（v1.1，迁移权归 resume 进程——终审 R-1）** | `task run --resume <taskId>` 进程内：校验 Paused ∧ 存在 decision=approved ∧ snapshot 完整 → **同进程完成迁移（先持久化）+ 反序列化 + 从 nextCallRef 继续执行**。approve 命令只写 decision=approved（任务保持 Paused），可选 spawn resume；spawn 失败/崩溃由 manual-resume 兜底 | TaskRecord + Trace(TaskResumed, resumedBy=approve-spawn/manual-resume) | — |
+| **`Paused → Running`（v1.1，迁移权归 resume 进程——终审 R-1）** | `task run --resume <taskId>` 进程内：校验 Paused ∧ 存在 decision=approved ∧ snapshot 完整 → **同进程完成迁移（先持久化）+ 反序列化 + 从 nextCallRef 继续执行**。approve 命令只写 decision=approved（任务保持 Paused），可选 spawn resume；spawn 失败/崩溃由 manual-resume 兜底。**v1.2 修订注记（2026-09-20，TASK-44 批次四）：续跑段按任务绑定（快照冻结）的 memoryPolicy + 重建时刻的 active/degraded 记忆集重建记忆注入（injection=context 时，与首段同规则）——注入语义覆盖任务全程，contradiction 判定以重建后清单为准（A1 §2.1 v1.2 注记同源）** | TaskRecord + Trace(TaskResumed, resumedBy=approve-spawn/manual-resume) | — |
 | **`Paused → Cancelled`（v1.1）** | ① deny（cancelReason=approval_denied）；② 超时-deny（approval_timeout）；③ graceful/abort cancel 到达挂起任务（立即——挂起态无在飞原子调用；cancelReason=user/abort）；④ 超时-fail 走 Paused→Failed。任一路径：关联 ApprovalRequest 置 `decision=superseded`（cancel 到达时）/ denied（拒绝时）+ **删 PauseSnapshot** | TaskRecord + ApprovalRequest + Trace(TaskCancelled) | deny/超时-deny → Cancelled（无 FailureRecord）；**超时-fail → Policy(ApprovalTimeout)** |
 | **`Paused → Failed`（v1.1）** | 审批超时且 onTimeout=fail | TaskRecord + FailureRecord + Trace(TaskFailed) | Policy(ApprovalTimeout) |
 | `Running → Succeeded` | 输出契约校验通过 | TaskRecord + Trace(TaskSucceeded) | — |
