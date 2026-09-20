@@ -83,12 +83,18 @@ describe('DoD-②/③/④ T3 扫描清单配置化 + 阳性对照 + 夹具豁免
     expect(findings.filter((f) => f.kind === 'model_weight')).toHaveLength(3); // 扩展名/魔数/safetensors 各一
   });
 
-  it('DoD-② 夹具豁免规则（豁免入配置、可审计——P2-4）：默认配置下夹具零误报（含子树扫描口径）', () => {
+  it('DoD-② 夹具豁免规则（豁免入配置、可审计——P2-4）+ D-21 豁免锚定：仓库根扫描夹具零误报；子树/夹具根直接扫描不再静默豁免', () => {
     expect(DEFAULT_SCAN_CONFIG.exemptions.length).toBeGreaterThanOrEqual(1);
     expect(DEFAULT_SCAN_CONFIG.exemptions[0].reason).toBeTruthy(); // 无理由的豁免不允许
-    expect(scanForRelease(FIXTURES_ABS, DEFAULT_SCAN_CONFIG)).toEqual([]); // 夹具目录直接扫描：豁免生效
+    // 仓库根口径：豁免段序列 = 扫描根相对路径前缀（tests/fixtures/positive-controls）→ 夹具零误报
+    const repoScan = scanForRelease(process.cwd(), DEFAULT_SCAN_CONFIG);
+    expect(repoScan.filter((f) => toForward(f.file).includes('positive-controls'))).toEqual([]);
+    // D-21 锚定：夹具目录直接扫描（子树不含豁免前缀）→ 命中如实报告，不再静默零发现；
+    // 该场景的合法入口是 CLI 层 --allow-exempted-root（exit 语义见 releaseScanCli.test.ts）
+    const direct = scanForRelease(FIXTURES_ABS, DEFAULT_SCAN_CONFIG);
+    expect(direct.some((f) => f.file === 'positive-control.secret.txt')).toBe(true);
     const testsScan = scanForRelease(path.join(process.cwd(), 'tests'), DEFAULT_SCAN_CONFIG);
-    expect(testsScan.filter((f) => toForward(f.file).includes('positive-controls'))).toEqual([]); // 子树扫描：后缀段豁免同样生效
+    expect(testsScan.filter((f) => toForward(f.file).includes('positive-controls')).length).toBeGreaterThan(0); // 子树扫描：嵌套豁免不生效（D-21）
   });
 
 function toForward(p: string): string {

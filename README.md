@@ -27,7 +27,7 @@ npm run cli -- task create <agentId> <input.json>  # 创建任务（落库前校
 npm run cli -- task run <taskId>                   # 执行（Queued→Running→终态）
 npm run cli -- query t1 <taskId>                   # T1：Trace → 生效 Spec 版本 + Prompt/工具版本
 npm run cli -- query t2 <versionId>                # T2：版本 → 全部越权尝试与拦截点
-npm run release-scan                               # T3：发布产物密钥/模型权重扫描（零命中通过）
+npm run release-scan                               # T3：发布产物密钥/模型权重扫描（命中=1 / 干净=0 / 未扫描=2；豁免根自检加 --allow-exempted-root）
 ```
 
 ## CLI · 第二阶段批次一（安全与版本核心）
