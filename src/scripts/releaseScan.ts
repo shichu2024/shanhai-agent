@@ -57,7 +57,14 @@ export const SECRET_PATTERNS: { name: string; re: RegExp }[] = DEFAULT_SCAN_CONF
 }));
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'data', 'traces', 'experiment-runs', '.claude', '.dsh', '.multica', 'coverage']);
-const TEXT_EXTENSIONS = new Set(['.ts', '.js', '.json', '.md', '.txt', '.yml', '.yaml', '.example', '.gitignore', '.mjs', '.cjs', '.sql', '.sh', '.ps1', '.html', '.css', '.jsonl']);
+// 第三阶段批次一（D-21）扩面 +11 项 = 10 个简单扩展名（extname 可取）+ 1 个多段扩展名（.env.local，按文件名后缀匹配）：
+// .pem/.key/.log/.env/.p12/.pfx/.crt/.ini/.cfg/.conf + .env.local
+const TEXT_EXTENSIONS = new Set([
+  '.ts', '.js', '.json', '.md', '.txt', '.yml', '.yaml', '.example', '.gitignore', '.mjs', '.cjs', '.sql', '.sh', '.ps1', '.html', '.css', '.jsonl',
+  '.pem', '.key', '.log', '.env', '.p12', '.pfx', '.crt', '.ini', '.cfg', '.conf',
+]);
+// 多段扩展名（extname 只能取到最后一段 .local，按文件名后缀匹配）
+const COMPOUND_TEXT_SUFFIXES = ['.env.local'];
 
 export interface ScanFinding {
   kind: 'secret' | 'model_weight';
@@ -65,30 +72,43 @@ export interface ScanFinding {
   detail: string;
 }
 
-export function scanForRelease(root: string, config: ScanConfig = DEFAULT_SCAN_CONFIG): ScanFinding[] {
+/** 扫描统计（可审计残余面：二进制探测跳过数——A6 §8.1 已知未扫描残余的可观测化） */
+export interface ScanStats {
+  binarySkipped: number;
+}
+
+// 正反斜杠均归一（配置内手写正斜杠路径在 Windows 上不得静默失配）
+const toFwd = (p: string): string => p.split(/[\\/]/).join('/');
+const segmentsOf = (p: string): string[] => toFwd(p).split('/').filter((s) => s.length > 0);
+
+/** 豁免锚定（第三阶段批次一，D-21）：豁免段序列必须是文件「相对扫描根路径」的前缀——
+ * 豁免必须位于扫描根内、从扫描根起算；绝对路径任意嵌套位置命中不再豁免（fail-closed：
+ * 在扫描树内深挖同名目录结构不再能借豁免隐藏命中）。 */
+const exemptAnchored = (relSegments: string[], exemptionSegments: string[][]): boolean =>
+  exemptionSegments.some(
+    (segs) => segs.length > 0 && segs.length <= relSegments.length && segs.every((s, i) => relSegments[i] === s),
+  );
+
+/** 扫描根本身位于豁免路径内（如直接以夹具目录为根）——短路态判定（绝对路径段序列包含，任意嵌套从严）：
+ * CLI 层据此输出 exit 2（未扫描 ≠ 干净），或经 --allow-exempted-root 显式放行。 */
+export function rootExemption(root: string, config: ScanConfig = DEFAULT_SCAN_CONFIG): ScanExemption | null {
+  const rootSegs = segmentsOf(path.resolve(root));
+  for (const x of config.exemptions) {
+    const segs = segmentsOf(x.path);
+    if (segs.length === 0 || rootSegs.length < segs.length) continue;
+    for (let i = 0; i + segs.length <= rootSegs.length; i++) {
+      if (segs.every((s, j) => rootSegs[i + j] === s)) return x;
+    }
+  }
+  return null;
+}
+
+export function scanForRelease(root: string, config: ScanConfig = DEFAULT_SCAN_CONFIG, stats?: ScanStats): ScanFinding[] {
   const compiled = config.secretPatterns.map((p) => ({ name: p.name, re: new RegExp(p.pattern) }));
   const weightExtensions = new Set(config.weightExtensions.map((e) => e.toLowerCase()));
-  // 豁免匹配（P2-4）：以「绝对路径包含豁免路径段序列」判定——对任意扫描根（仓库根 / 子树 / 夹具目录本身）口径统一。
-  // 配置内豁免路径为仓库相对形态（tests/fixtures/positive-controls），展开为段序列后与文件绝对路径段匹配。
-  const toFwd = (p: string): string => p.split(path.sep).join('/');
-  const segmentsOf = (p: string): string[] => toFwd(p).split('/').filter((s) => s.length > 0);
   const rootAbs = path.resolve(root);
-  const exemptSegments = config.exemptions.map((x) => ({ x, segs: segmentsOf(x.path) }));
-  const pathContains = (container: string[], part: string[]): boolean => {
-    if (part.length === 0 || container.length < part.length) return false;
-    for (let i = 0; i + part.length <= container.length; i++) {
-      if (part.every((s, j) => container[i + j] === s)) return true;
-    }
-    return false;
-  };
-  const exempt = (absSegments: string[]): ScanExemption | null =>
-    exemptSegments.find(({ x, segs }) => pathContains(absSegments, segs))?.x ?? null;
-  const rootSegs = segmentsOf(rootAbs);
+  const exemptionSegments = config.exemptions.map((x) => segmentsOf(x.path));
   const findings: ScanFinding[] = [];
-  // 扫描根本身位于豁免路径内（如直接以夹具目录为根）→ 整体跳过
-  if (exempt(rootSegs) !== null) {
-    return findings;
-  }
   walk(root);
   return findings;
 
@@ -96,7 +116,8 @@ export function scanForRelease(root: string, config: ScanConfig = DEFAULT_SCAN_C
     if (!existsSync(dir)) return;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.isSymbolicLink()) continue; // 符号链接（含目录 junction）不跟随、不扫描
-      if (entry.name.startsWith('.git') && entry.isDirectory()) continue;
+      // 只跳过 .git 本体（内部对象库）——.github/.gitlab 等目录是 CI/流程配置的真实发布面，必须扫描
+      if (entry.name === '.git' && entry.isDirectory()) continue;
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name)) continue;
         walk(path.join(dir, entry.name));
@@ -104,9 +125,8 @@ export function scanForRelease(root: string, config: ScanConfig = DEFAULT_SCAN_C
       }
       const file = path.join(dir, entry.name);
       const ext = path.extname(entry.name).toLowerCase();
-      const rel = path.relative(root, file);
-      const ex = exempt(segmentsOf(file));
-      if (ex) continue; // 豁免命中：跳过（豁免清单本身随配置可审计）
+      const rel = toFwd(path.relative(rootAbs, file));
+      if (exemptAnchored(segmentsOf(rel), exemptionSegments)) continue; // 锚定豁免命中：跳过（豁免清单随配置可审计）
 
       if (weightExtensions.has(ext)) {
         findings.push({ kind: 'model_weight', file: rel, detail: `模型权重文件扩展名 ${ext}` });
@@ -123,16 +143,45 @@ export function scanForRelease(root: string, config: ScanConfig = DEFAULT_SCAN_C
         continue;
       }
       // config.example 中的占位与文档中的示例说明不视为命中（占位值不含真实密钥材料）
-      if (TEXT_EXTENSIONS.has(ext) || !ext) {
-        const content = readFileSync(file, 'utf8');
-        for (const { name, re } of compiled) {
-          const m = re.exec(content);
-          if (m) {
-            findings.push({ kind: 'secret', file: rel, detail: `${name}：${m[0].slice(0, 8)}…（位置 ${m.index}）` });
-          }
-        }
+      const isTextByName = TEXT_EXTENSIONS.has(ext) || !ext || COMPOUND_TEXT_SUFFIXES.some((s) => entry.name.toLowerCase().endsWith(s));
+      if (isTextByName) {
+        scanText(file, rel, compiled, findings);
+        continue;
+      }
+      // 择项（D-21）：白名单外扩展名——二进制探测先行（反方执行注记：探测必须先于解码扫描，
+      // 二进制内容不得进入 UTF-8 解码），探测放行的未知扩展文本按宽松解码扫描（fail-closed 收敛）；
+      // 探测判为二进制 = 已知未扫描残余（A6 §8 v1.3 成文口径）。
+      if (!looksBinary(file)) {
+        scanText(file, rel, compiled, findings);
+      } else if (stats) {
+        stats.binarySkipped += 1; // 残余可观测：探测判二进制跳过的文件数进统计（CLI 汇总行输出）
       }
     }
+  }
+}
+
+function scanText(file: string, rel: string, compiled: { name: string; re: RegExp }[], findings: ScanFinding[]): void {
+  const content = readFileSync(file, 'utf8'); // 宽松解码：非法序列替换为 U+FFFD，不中断扫描
+  for (const { name, re } of compiled) {
+    const m = re.exec(content);
+    if (m) {
+      findings.push({ kind: 'secret', file: rel, detail: `${name}：${m[0].slice(0, 8)}…（位置 ${m.index}）` });
+    }
+  }
+}
+
+/** 二进制探测：首 8KB 含 NUL 字节即判二进制（文本文件不含 NUL；权重文件已被前置检查拦截） */
+function looksBinary(file: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, 'r');
+    const buf = Buffer.alloc(8192);
+    const bytesRead = readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, bytesRead).includes(0);
+  } catch {
+    return true; // 不可读视为二进制（保守：不进入解码扫描）
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -189,12 +238,55 @@ function loadScanConfigFrom(repoRoot: string): ScanConfig {
   }
 }
 
+// CLI 入口（第三阶段批次一，D-21）：函数化 + exit 码三元组——命中=1 / 干净=0 / 未扫描=2。
+// 「未扫描 ≠ 干净」：短路根（扫描根本身位于豁免路径内）与扫描根不存在均为应扫而未扫，exit 2；
+// --allow-exempted-root 显式放行短路根（如夹具自检），放行动作进输出日志。
+export interface CliRunOptions {
+  cwd?: string;
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+export function runReleaseScanCli(argv: string[], opts: CliRunOptions = {}): number {
+  const out = opts.stdout ?? console.log;
+  const err = opts.stderr ?? console.error;
+  const cwd = opts.cwd ?? process.cwd();
+  const flags = argv.filter((a) => a.startsWith('--'));
+  const positional = argv.filter((a) => !a.startsWith('--'));
+  const allowExemptedRoot = flags.includes('--allow-exempted-root');
+  for (const f of flags) {
+    if (f !== '--allow-exempted-root') err(`T3 发布安全扫描：未识别参数 ${f}（已知：--allow-exempted-root）`); // 拼错 flag 不得静默
+  }
+  const root = path.resolve(cwd, positional[0] ?? '.');
+  const config = loadScanConfigFrom(cwd);
+
+  if (!existsSync(root)) {
+    err(`T3 发布安全扫描：扫描根不存在——未扫描（exit 2）：${root}`);
+    return 2;
+  }
+  const rootExempt = rootExemption(root, config);
+  if (rootExempt !== null) {
+    if (!allowExemptedRoot) {
+      err(`T3 发布安全扫描：扫描根位于豁免路径内（豁免 ${rootExempt.path}；判定=扫描根绝对路径包含该段序列，任意嵌套从严）——未扫描 ≠ 干净（exit 2）；如确需以此根扫描（如夹具自检），加 --allow-exempted-root 显式放行`);
+      return 2;
+    }
+    out(`T3 发布安全扫描：--allow-exempted-root 已放行豁免根（${rootExempt.path}：${rootExempt.reason}）——继续扫描`);
+  }
+  // 扫描执行异常（不可读目录 / 非法正则配置 / root 为文件等）不得落入 exit 1（命中）语义——未扫描 ≠ 干净
+  let findings: ScanFinding[];
+  const stats: ScanStats = { binarySkipped: 0 };
+  try {
+    findings = scanForRelease(root, config, stats);
+  } catch (e) {
+    err(`T3 发布安全扫描：扫描执行异常——未扫描 ≠ 干净（exit 2）：${e instanceof Error ? e.message : String(e)}`);
+    return 2;
+  }
+  out(`T3 发布安全扫描：${root}（清单 ${config.secretPatterns.length} 密钥正则 / ${config.weightExtensions.length} 扩展名 / ${config.weightMagics.length} 魔数 / safetensors 嗅探 ${config.sniffSafetensors ? 'on' : 'off'} / 豁免 ${config.exemptions.length} 项 / 二进制残余 ${stats.binarySkipped} 个文件）`);
+  out(formatFindings(findings));
+  return findings.length === 0 ? 0 : 1;
+}
+
 // CLI 入口
 if (process.argv[1] && /release[-_]?scan\.js$/i.test(process.argv[1])) {
-  const root = process.argv[2] ?? process.cwd();
-  const config = loadScanConfigFrom(process.cwd());
-  const findings = scanForRelease(root, config);
-  console.log(`T3 发布安全扫描：${root}（清单 ${config.secretPatterns.length} 密钥正则 / ${config.weightExtensions.length} 扩展名 / ${config.weightMagics.length} 魔数 / safetensors 嗅探 ${config.sniffSafetensors ? 'on' : 'off'} / 豁免 ${config.exemptions.length} 项）`);
-  console.log(formatFindings(findings));
-  process.exit(findings.length === 0 ? 0 : 1);
+  process.exit(runReleaseScanCli(process.argv.slice(2)));
 }

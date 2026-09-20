@@ -22,3 +22,6 @@ traces/
 
 # 实验本地运行产物
 experiment-runs/
+
+# 覆盖率产物（本地生成）
+coverage/
