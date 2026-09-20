@@ -28,11 +28,10 @@ export class ConfigError extends Error {
 
 /**
  * 配置解析：config 文件承载非秘密部分（baseUrl、白名单），密钥仅从环境变量读取。
- * 查找次序：SHANHAI_CONFIG 环境变量指定的路径 → ./config.local.json → ./config.json。
+ * 查找次序：SHANHAI_CONFIG 环境变量指定的路径 → ./config.local.json（唯一回退；D-26：config.json 回退从未生效，退化三元已删）。
  */
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
-  const configPath =
-    env.SHANHAI_CONFIG ?? (existsSync('config.local.json') ? 'config.local.json' : 'config.local.json');
+  const configPath = env.SHANHAI_CONFIG ?? 'config.local.json';
   if (!existsSync(configPath)) {
     throw new ConfigError(
       `未找到配置文件（${configPath}）。T3 发布安全规则：无配置即拒绝启动——请复制 config.example.json 为 config.local.json 并通过环境变量注入密钥。`,
@@ -40,7 +39,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   }
   const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
     providers?: Record<string, { baseUrl?: string; authTokenEnv?: string; models?: string[] }>;
-    redaction?: { rules?: { ruleId?: string; pattern?: string; scope?: string }[] };
+    redaction?: { rules?: { ruleId?: string; pattern?: string; scope?: string }[] }; // scope 为已删除装饰字段：存量条目被忽略（§4.7-1）
     evolution?: { dismissCooldownDays?: number };
   };
   const anthropic = raw.providers?.anthropic;
@@ -58,10 +57,10 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   }
   const redaction: RedactionPolicy = raw.redaction?.rules
     ? {
+        // §4.7-1（批次四）：scope 装饰字段删除后不再校验——无 scope 的规则被接受（存量兼容），已写 scope 的条目被忽略
         rules: raw.redaction.rules
-          .filter((r): r is { ruleId: string; pattern: string; scope: 'payload' | 'all' } =>
-            typeof r.ruleId === 'string' && typeof r.pattern === 'string' && (r.scope === 'payload' || r.scope === 'all'))
-          .map((r) => ({ ruleId: r.ruleId, pattern: r.pattern, scope: r.scope })),
+          .filter((r): r is { ruleId: string; pattern: string } => typeof r.ruleId === 'string' && typeof r.pattern === 'string')
+          .map((r) => ({ ruleId: r.ruleId, pattern: r.pattern })),
       }
     : defaultRedactionPolicy();
   return {

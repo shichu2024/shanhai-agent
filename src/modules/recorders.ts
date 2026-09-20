@@ -135,11 +135,13 @@ export class AuditRecorder {
       );
   }
 
-  /** rejectReason 恒为 JSON（issues 数组）：解析后过管道再序列化；解析失败退化为字符串级管道 */
+  /** rejectReason 恒为 JSON（issues 数组）：解析后过管道再序列化；解析失败退化为字符串级管道。
+   * 批次四（批次二验收 P3 修改）：退化分支补 stderr 可观测痕迹——格式异常信号不再被静默吞掉。 */
   private redactReason(reason: string): string {
     try {
       return JSON.stringify(redactValue(JSON.parse(reason), this.redaction));
     } catch {
+      process.stderr.write('redactReason: rejectReason 非法 JSON，退化为字符串级脱敏（格式异常已留痕，内容不可恢复）\n');
       return redactString(reason, this.redaction);
     }
   }

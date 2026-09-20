@@ -8,7 +8,8 @@ import { SECRET_PATTERNS } from '../scripts/releaseScan.js';
 export interface RedactionRule {
   ruleId: string;
   pattern: string; // 正则源文本（命中替换为 [REDACTED:<ruleId>]）
-  scope: 'payload' | 'all';
+  // §4.7-1（批次四）：scope 装饰字段已删除——纯装饰从未参与管道行为（walk 不读取）；
+  // 存量配置中已写入 scope 的条目被加载器忽略，零迁移成本（A6 §8 注记成文）。
 }
 
 export interface RedactionPolicy {
@@ -32,8 +33,8 @@ const STRIP_AT_ENTRY = new Set([...ENVELOPE_KEYS, 'redacted']);
 export function defaultRedactionPolicy(): RedactionPolicy {
   return {
     rules: [
-      ...SECRET_PATTERNS.map((p, i) => ({ ruleId: `secret-${i + 1}`, pattern: p.re.source, scope: 'all' as const })),
-      { ruleId: 'email', pattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', scope: 'payload' as const },
+      ...SECRET_PATTERNS.map((p, i) => ({ ruleId: `secret-${i + 1}`, pattern: p.re.source })),
+      { ruleId: 'email', pattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}' },
     ],
   };
 }

@@ -10,7 +10,7 @@
   "redaction": {
     "$comment": "可选段（平台层运行时配置，不进 Spec）。rules 省略 → 默认规则集（密钥格式 + email）；rules: [] → 空规则集（管道仍生效，仅无命中）。命中替换为 [REDACTED:<ruleId>]，原文不落盘。",
     "rules": [
-      { "ruleId": "email", "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "scope": "payload" }
+      { "ruleId": "email", "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}" }
     ]
   },
   "evolution": {
