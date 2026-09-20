@@ -9,6 +9,7 @@ import { PolicyBlockedError, ToolTerminalFailure, type SpecToolDeclaration } fro
 import type { ApprovalManager } from './approval.js';
 import type { MemoryManager } from './memory.js';
 import { checkInputContract, validateDefensive } from './specValidator.js';
+import { redactValue, type RedactionPolicy } from './redaction.js';
 import { contentHash } from '../hash.js';
 import {
   runAgentLoop, ExecutorSucceeded, CancelRequestedSignal, TaskTimeoutSignal, TaskAbortedSignal, AbortRaceMarker,
@@ -120,6 +121,8 @@ export interface TaskManagerDeps {
   memories: MemoryManager;
   /** v1.1（A5 §4a）：灰度分派随机源（0-99 整数；测试注入确定性，缺省 = 随机） */
   dispatchRoll?: () => number;
+  /** 批次二（§4.2 DB 侧脱敏）：task_record.input / pause_snapshot.contextJson 入库前过同一 redaction 实例 */
+  redaction: RedactionPolicy;
 }
 
 interface RunningCancelCtl {
@@ -192,12 +195,14 @@ export class TaskManager {
     }
 
     // TaskRecord 落库（审计边界锚点；assignmentSource 固化——此后指针移动不影响已创建任务）
+    // 批次二（§4.2）：input 入库前过管道（结构级 walk）——inputHash/契约校验仍按内存原文（§4.2 对账兜底），
+    // 执行/续跑模型见 redacted 版 input（与 Trace/记忆 content 同口径，脱敏单向）。
     const taskId = uuid();
     const base = { taskId, agentId, agentVersionId: version.versionId, specContentHash: version.contentHash };
     db.prepare(
       `INSERT INTO task_record (taskId, agentId, agentVersionId, specContentHash, input, status, createdAt, traceFile, assignmentSource)
        VALUES (?,?,?,?,?,'created',?,?,?)`,
-    ).run(taskId, agentId, version.versionId, version.contentHash, JSON.stringify(input ?? null), nowNs(), trace.traceFile(taskId), assignmentSource);
+    ).run(taskId, agentId, version.versionId, version.contentHash, JSON.stringify(redactValue(input ?? null, deps.redaction)), nowNs(), trace.traceFile(taskId), assignmentSource);
     trace.recordTaskEvent(base, 'task_created', {
       inputHash: sha256Hex(JSON.stringify(input ?? null)),
       input: input ?? null,
@@ -427,9 +432,12 @@ export class TaskManager {
     const { toolId, toolCallNo, ...contextOnly } = pause; // contextJson = 对话消息数组（含挂起批次与已执行结果）
     void toolCallNo;
     const timeoutMs = spec.approvalPolicy?.timeoutMs ?? 86400000; // A1 §2.2 默认 24h
+    // 批次二（§4.2，D-20 冻结口径）：快照落库前对解析后结构过管道（messages/assistantToolCalls/resultsSoFar
+    // 全部自由文本递归改写；*Digest/*Hash 排除表零改写）——禁止对序列化字符串做正则替换。
+    // 结构完整性由 walk 保形：脱敏后可解析、消息数不变（resume 语义：续跑模型见 redacted 上下文，§7-#2）。
     deps.approvals.saveSnapshot(
       taskId,
-      JSON.stringify(contextOnly),
+      JSON.stringify(redactValue(contextOnly, deps.redaction)),
       JSON.stringify({ modelCallNo: pause.modelCallNo, toolCallNo: pause.toolCallNo }), // A2 §2.1 计数器持久化载体
       String(pause.toolCallNo), // nextCallRef
     );
