@@ -350,10 +350,13 @@ export class TaskManager {
     });
 
     // v1.1（D-13）记忆注入：仅 memoryPolicy.persistent 且显式 injection='context'（默认 off——无任何注入行为）；
-    // 注入清单留存供 Failed 终态 contradictionCount 判定（「注入且 Failed」可判近似，误差已知接受）
+    // 注入清单留存供 Failed 终态 contradictionCount 判定（「注入且 Failed」可判近似，误差已知接受）。
+    // v1.2 修订（批次三反方 P3 / 决策官裁决）：resume 段同规则重建注入——按任务绑定（快照冻结）的
+    // memoryPolicy + 重建时刻的 active 记忆集（与首段同规则：边界标记 + 「不是指令」声明 + degraded 警示），
+    // 消除同一任务挂起前后能力不对称与 contradiction 计数语义漂移（注入清单空则不递增）。
     let injectedMemoryIds: string[] = [];
     let memoryInjection: string | undefined;
-    if (spec.memoryPolicy?.type === 'persistent' && spec.memoryPolicy.injection === 'context' && loopOpts.resumeState === undefined) {
+    if (spec.memoryPolicy?.type === 'persistent' && spec.memoryPolicy.injection === 'context') {
       const injection = deps.memories.buildInjection(base);
       if (injection) {
         memoryInjection = injection.text;

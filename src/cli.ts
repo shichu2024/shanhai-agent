@@ -116,7 +116,10 @@ async function main(): Promise<void> {
       } else if (sub === 'report') {
         const [agentId] = pos;
         if (!agentId) usage();
-        const report = buildAgentReport((rt as unknown as { db: import('better-sqlite3').Database }).db, agentId, { since: flagValue(rest, '--since') ?? undefined });
+        const report = buildAgentReport((rt as unknown as { db: import('better-sqlite3').Database }).db, agentId, {
+          since: flagValue(rest, '--since') ?? undefined,
+          t1: (taskId) => queryT1(rt, taskId), // 健康面板 T1 P95 实测采样（批次四 DoD-①，§4.8 条件触发监测）
+        });
         console.log(JSON.stringify(report, null, 2));
       } else if (sub === 'list') {
         const [agentId] = pos;

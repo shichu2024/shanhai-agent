@@ -35,6 +35,53 @@ export interface ReportAnswer {
     toolUpgradeAffectedSpecs: ToolUpgradeAffectedSpec[]; // R-5：Spec 声明等级 < 当前登记等级的存量引用清单
     stale: { queued: number; paused: number }; // staleQueued/stalePaused 只读汇总
   };
+  /** 批次四 DoD-①（设计 §4.8，D-15）：OTel 条件监测健康面板——只读指标 + 触发判定，不做常驻接入 */
+  healthPanel: OtelHealthPanel;
+}
+
+export interface OtelHealthPanel {
+  /** 触发条件①（D-15 量化）：单库 Trace 事件总数 / Trace 文件数 */
+  traceEventCount: number;
+  traceFileCount: number;
+  /** 触发条件①：T1 单查询实测耗时（ms，本面板构建时对库内任务采样；样本 <5 输出 null——不假装） */
+  t1QueryP95Ms: number | null;
+  /** 条件①判定：traceEventCount > 10000 或 t1QueryP95Ms > 500 */
+  triggered: boolean;
+  /** 未满足前的义务（§4.8）：触发指标可见 + 归档投影层设计的提示（真源单一性不变——断言永不下沉 OTel） */
+  note: string;
+}
+
+/** OTel 触发条件量化（D-15）：① 单库 Trace 事件 >10,000 或 T1 单查询 P95 >500ms */
+export const OTEL_TRACE_EVENT_THRESHOLD = 10000;
+export const OTEL_T1_P95_MS_THRESHOLD = 500;
+
+/** 面板构建（只读，批次四 DoD-①）：事件计数走 trace_index 单查询；
+ * T1 采样实测走注入的 queryT1（每任务单文件读取——本面板即其 P95 度量对象）；未注入 → P95 null（不假装） */
+export function buildOtelHealthPanel(db: Database.Database, t1?: (taskId: string) => unknown): OtelHealthPanel {
+  const traceEventCount = (db.prepare(`SELECT COUNT(*) AS c FROM trace_index`).get() as { c: number }).c;
+  const traceFileCount = (db.prepare(`SELECT COUNT(DISTINCT taskId) AS c FROM trace_index`).get() as { c: number }).c;
+  const sampleTasks = db.prepare(`SELECT taskId FROM task_record ORDER BY createdAt DESC LIMIT 10`).all() as { taskId: string }[];
+  const latencies: number[] = [];
+  if (t1 !== undefined) {
+    for (const { taskId } of sampleTasks) {
+      const t0 = process.hrtime.bigint();
+      t1(taskId);
+      latencies.push(Number(process.hrtime.bigint() - t0) / 1e6);
+    }
+  }
+  latencies.sort((a, b) => a - b);
+  // P95（小样本按次序取整；样本 <5 → null——数据不足不假装）
+  const t1QueryP95Ms = latencies.length >= 5 ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))] : null;
+  const triggered = traceEventCount > OTEL_TRACE_EVENT_THRESHOLD || (t1QueryP95Ms !== null && t1QueryP95Ms > OTEL_T1_P95_MS_THRESHOLD);
+  return {
+    traceEventCount,
+    traceFileCount,
+    t1QueryP95Ms,
+    triggered,
+    note: triggered
+      ? 'OTel 触发条件①已满足——按 §4.8 投影层设计实施（JSONL+SQLite 永为真源，断言永不下沉 OTel 后端）'
+      : '触发指标未达（条件①：Trace 事件 >10000 或 T1 P95 >500ms；条件②/③：多实例/外部 APM 需求——单机库内不可测，显式留位）。满足前义务：本面板只读监测，无后台进程',
+  };
 }
 
 /** promote 建议判据（阈值可配；样本 <20 → insufficient-sample 显式输出，单机量级常不可达） */
@@ -44,9 +91,10 @@ export const PROMOTE_DROP_TOLERANCE = 0.05; // canary ≥ stable − 5pp
 export function buildAgentReport(
   db: Database.Database,
   agentId: string,
-  opts: { since?: string } = {},
+  opts: { since?: string; t1?: (taskId: string) => unknown } = {},
 ): ReportAnswer {
   const since = opts.since ?? null;
+  const healthPanelRef = buildOtelHealthPanel(db, opts.t1);
 
   const groups: GroupStats[] = [];
   for (const source of ['stable', 'canary', 'explicit'] as const) {
@@ -147,6 +195,7 @@ export function buildAgentReport(
       toolUpgradeAffectedSpecs,
       stale: { queued: staleQueued, paused: stalePaused },
     },
+    healthPanel: healthPanelRef,
   };
 }
 
