@@ -1,0 +1,11 @@
+{
+  "$comment": "T3 阳性对照（A-17 / D-29）：envRefs 值位非 ${...} 占位形态——第四阶段批次二 envRefs 规则族阳性样本。本文件位于豁免清单（tests/fixtures/positive-controls，P2-4），仓库自扫描不受影响；验收以副本扫描为准。",
+  "mcpServers": {
+    "weather": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@example/mcp-weather"],
+      "envRefs": { "API_KEY": "plaintext-positive-control-not-a-real-secret" }
+    }
+  }
+}

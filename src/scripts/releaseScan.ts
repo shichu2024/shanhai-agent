@@ -67,7 +67,7 @@ const TEXT_EXTENSIONS = new Set([
 const COMPOUND_TEXT_SUFFIXES = ['.env.local'];
 
 export interface ScanFinding {
-  kind: 'secret' | 'model_weight';
+  kind: 'secret' | 'model_weight' | 'credential_ref';
   file: string;
   detail: string;
 }
@@ -148,6 +148,11 @@ export function scanForRelease(root: string, config: ScanConfig = DEFAULT_SCAN_C
       const isTextByName = TEXT_EXTENSIONS.has(ext) || !ext || COMPOUND_TEXT_SUFFIXES.some((s) => entry.name.toLowerCase().endsWith(s));
       if (isTextByName) {
         scanText(file, rel, compiled, findings, stats);
+        // 第四阶段批次二（§4.3-6，D-29 / A-17）：envRefs 值位规则族——JSON 配置文件中
+        // mcpServers 段的 envRefs 值不为 ${VAR} 占位形态即命中（凭据永不落配置面）。
+        // 扫描面澄清（P3-4）：config.local.json 本不入发布物，本规则实际保护 config.example.json
+        // 与误提交的本地配置副本/样例。
+        if (ext === '.json') scanEnvRefs(file, rel, findings);
         continue;
       }
       // 择项（D-21）：白名单外扩展名——二进制探测先行（反方执行注记：探测必须先于解码扫描，
@@ -181,6 +186,37 @@ function scanText(file: string, rel: string, compiled: { name: string; re: RegEx
       findings.push({ kind: 'secret', file: rel, detail: `${name}：${m[0].slice(0, 8)}…（位置 ${m.index}）` });
     }
   }
+}
+
+/** envRefs 值位规则族（§4.3-6，D-29）：与 resolveEnvRefs 占位正则同源——值非 ${VAR} 形态即命中。
+ *  只治理键名 envRefs 的对象值位（其他键下的字面量不误报）；JSON 解析失败跳过（其余规则族照常）。 */
+const ENVREF_PLACEHOLDER = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+
+function scanEnvRefs(file: string, rel: string, findings: ScanFinding[]): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return; // 非 JSON 内容不归本规则族（宽松解码归 scanText 密钥规则族）
+  }
+  const walk = (node: unknown, path: string): void => {
+    if (node === null || typeof node !== 'object') return;
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === 'envRefs' && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        for (const [refKey, refVal] of Object.entries(value as Record<string, unknown>)) {
+          if (typeof refVal !== 'string' || !ENVREF_PLACEHOLDER.test(refVal)) {
+            findings.push({
+              kind: 'credential_ref',
+              file: rel,
+              detail: `envRefs.${refKey} 值位非 \${VAR} 环境变量引用形态（D-29：MCP 凭据只允许环境变量引用，值永不落配置面；位置 ${path ? `${path}.` : ''}envRefs.${refKey}）`,
+            });
+          }
+        }
+      }
+      walk(value, path ? `${path}.${key}` : key);
+    }
+  };
+  walk(parsed, '');
 }
 
 /** 二进制探测（批次四 P2-1 三态化）：首 8KB 含 NUL 字节即判二进制（文本文件不含 NUL；权重文件已被前置检查拦截）；

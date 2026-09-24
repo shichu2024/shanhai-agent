@@ -100,8 +100,8 @@ export type CancelReason = 'user' | 'approval_denied' | 'approval_timeout' | 'ab
 
 export type CallKind = 'model' | 'tool';
 
-// 审计流 RejectedRequest kind（A6 §4）
-export type RejectedKind = 'spec_registration' | 'task_creation' | 'cli_operation';
+// 审计流 RejectedRequest kind（A6 §4；第四阶段批次二增 tool_registration——§4.3 外部评级治理拒绝面）
+export type RejectedKind = 'spec_registration' | 'task_creation' | 'cli_operation' | 'tool_registration';
 
 // A5 §5 审计流版本事件（v1.1 增 version_reviewed / canary_configured / version_promoted）
 export type AuditEventType =
