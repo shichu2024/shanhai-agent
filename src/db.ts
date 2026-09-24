@@ -240,6 +240,13 @@ function migrate(db: Database.Database): void {
   addColumn(db, 'tool_registry', 'source', `TEXT`); // builtin / mcp:<serverName>（来源可追溯）
   addColumn(db, 'tool_registry', 'registeredBy', `TEXT`); // 登记人（external 评级断言的留痕落点——P3-3 辅助留痕，非强证据）
   addColumn(db, 'tool_registry', 'description', `TEXT`); // 人类可读描述（discovery 时从 MCP server 取得）
+
+  // 第四阶段批次三（§4.4）：task_record 委托治理增列 ×2——ADD COLUMN 原地支持，零数据回填。
+  // A3 注记（规格-实现漂移登记）：parentTaskId 在 A3 §4 早有规格行，但 db.ts 迁移从未落地——
+  // 属规格-实现存量漂移（WP-4A 审查 P2-1 确认），本批落地补迁移并在 docs/phase4/03 注记登记；
+  // delegationDepth 为本批新列（0=根任务，默认值即既有语义）。
+  addColumn(db, 'task_record', 'parentTaskId', `TEXT`); // 委托树父指针（跨 Agent 审计 = 单查询沿树回放）
+  addColumn(db, 'task_record', 'delegationDepth', `INTEGER NOT NULL DEFAULT 0`); // 委托深度（0=根；默认上限 1）
 }
 
 /** 幂等 ADD COLUMN（存量库原地升级，零回填） */

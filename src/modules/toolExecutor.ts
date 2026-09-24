@@ -50,6 +50,14 @@ export interface ToolExecutorOptions {
   /** 第四阶段批次一（§4.2-3 调用桥）：impls Miss 时的 external 分派（kind=external → MCP tools/call）；
    * attempt/timeout/归因由本执行器既有循环承载（同构，A-14）。 */
   externalCall?: (toolId: string, args: Record<string, unknown>) => Promise<unknown>;
+  /** 第四阶段批次三（§4.4，D-30）：委托原语特殊类别接线——task-delegate 走独立分派路径
+   *  （超时豁免 / attempt=1 禁重试 / anchorChildTaskId 幂等重入 / 挂起信号上浮）。 */
+  delegation?: {
+    primitive: DelegatePrimitive;
+    task: DelegateTaskContext;
+    /** resume 幂等重入锚点（PauseSnapshot.delegation.childTaskId——挂起前已创建子任务时存在） */
+    anchorChildTaskId?: string;
+  };
 }
 
 /** L3 调用等待审批（A2 §8 v1.1 审批分支）——由执行循环接管：写 PauseSnapshot + ApprovalRequest → Paused */
@@ -65,6 +73,42 @@ export class ApprovalRequiredSignal extends Error {
     super(message);
     this.name = 'ApprovalRequiredSignal';
   }
+}
+
+// ---------- §4.4 鲲鹏委托最小形态（批次三）：委托原语特殊类别 ----------
+
+/** 委托原语工具 ID（builtin，登记缺省 L3） */
+export const DELEGATE_TOOL_ID = 'task-delegate';
+
+/** 委托等待信号（§4.4 信号上浮 / 幂等重入）：子任务未终态（Paused/pending）→ 父保持 Paused + 提示。
+ *  在 ToolExecutor 委托原语路径原样上浮（不进 attempt 异常归类——R-1 分类表）。 */
+export class DelegationWaitSignal extends Error {
+  /** 挂起调用在批次内的下标（执行循环回填，快照 pendingIndex 锚点） */
+  callIndex?: number;
+
+  constructor(
+    readonly childTaskId: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DelegationWaitSignal';
+  }
+}
+
+/** 委托原语 impl 的任务侧上下文（§4.4：治理预检与 impl 执行均以发起委托的任务为锚） */
+export interface DelegateTaskContext {
+  parentTaskId: string;
+  delegationDepth: number;
+  /** 父取消检查（P2-2 线程化：注入嵌套子循环原子调用边界代查 graceful/abort） */
+  isParentCancelRequested(): boolean;
+}
+
+/** 委托原语（§4.4，D-30）：由组合根接线（runtime/delegation.ts）——治理预检 + 阻塞式嵌套 impl */
+export interface DelegatePrimitive {
+  /** 治理预检（§4.4 治理规则表）：环路（沿 parentTaskId 上溯）/深度超限 → 结构化拒绝（policy_denied 语义） */
+  govern(args: Record<string, unknown>, task: DelegateTaskContext): PolicyDeniedResult | null;
+  /** impl 执行：子任务创建（先持久化）→ 同进程嵌套循环；子挂起经 DelegationWaitSignal 上浮 */
+  execute(args: Record<string, unknown>, task: DelegateTaskContext, call: { callNo: number; anchorChildTaskId?: string }): Promise<unknown>;
 }
 
 export class ToolExecutor {
@@ -84,24 +128,56 @@ export class ToolExecutor {
       toolId, argsDigest: digestArgs(args),
     });
 
+    // 委托原语特殊类别（§4.4，D-30）：治理预检（环路/深度）先于等级分支——
+    // 越权委托请求不进入 L3 审批挂起（F-12-⑤ 调用点拦截，闸门顺序见 gate 注释）。
+    const delegation = toolId === DELEGATE_TOOL_ID ? this.opts.delegation : undefined;
+    if (delegation) {
+      const governed = delegation.primitive.govern(args, delegation.task);
+      if (governed !== null) {
+        return this.handleDenial(governed, callNo);
+      }
+    }
+
     const gate = this.gate(toolId, args, callNo, approvedCallRef);
     if (gate === 'needs_approval') {
       // 抛给执行循环接管（写 snapshot + request → Paused → run 进程退出，D-18 挂起即退出模型）
       throw new ApprovalRequiredSignal(toolId, 'risk_level_blocked', `L3 工具 ${toolId} 请求等待人工审批（approvalPolicy.mode=onHighRisk）`);
     }
     if (gate !== null) {
-      const count = this.opts.getDenialCount() + 1;
-      this.opts.setDenialCount(count);
-      const evt = trace.recordCallEvent(base, 'policy_denied', 'tool', callNo, 1, {
-        toolId, reasonCode: gate.reasonCode, consecutiveDenialCount: count, message: gate.message,
-      });
-      if (count >= this.opts.maxConsecutiveDenials) {
-        throw new PolicyBlockedError(
-          `连续被拒 ${count} 次达 maxConsecutiveDenials=${this.opts.maxConsecutiveDenials}（${toolId}/${gate.reasonCode}）`,
-          count, evt.eventId,
-        );
+      return this.handleDenial(gate, callNo);
+    }
+
+    // 委托原语特殊类别（§4.4 四属性，R-1 分类表见 runtime/delegation.ts）：
+    //   超时豁免——不受 toolTimeoutMs 约束（impl = 整个嵌套子任务循环，30s 必超时，P1-1）；
+    //   禁重试——attempt=1，失败即终局（impl 含创建子任务副作用，重试 = 重复子任务，P1-1）；
+    //   信号上浮——DelegationWaitSignal（子未终态）/ApprovalRequiredSignal 原样上浮，
+    //             不进 attempt 异常归类为 Tool(execution_failed)（P0-1）。
+    if (delegation) {
+      trace.recordCallEvent(base, 'attempt_started', 'tool', callNo, 1, { kind: 'tool', delegation: true });
+      const delegateStartedAt = Date.now();
+      try {
+        const value = await delegation.primitive.execute(args, delegation.task, { callNo, anchorChildTaskId: delegation.anchorChildTaskId });
+        const registry = this.opts.getTool(toolId);
+        trace.recordCallEvent(base, 'tool_call_executed', 'tool', callNo, 1, {
+          toolId, latencyMs: Date.now() - delegateStartedAt, resultDigest: digestArgs(value), riskLevel: registry?.riskLevel ?? 'L3',
+          audited: false, delegation: true,
+        });
+        this.opts.setDenialCount(0);
+        return { outcome: 'ok', value };
+      } catch (err) {
+        const sigName = (err as Error).name;
+        if (
+          err instanceof ApprovalRequiredSignal || err instanceof DelegationWaitSignal ||
+          sigName === 'CancelRequestedSignal' || sigName === 'TaskAbortedSignal' || sigName === 'ExecutorSucceeded'
+        ) {
+          throw err; // 信号上浮特判（R-1）：取消/中止/挂起信号不归类 Tool(execution_failed)、不重试
+        }
+        const subClass = (err as Error).name === 'ToolTimeoutError' ? 'timeout' : (isInvalidParams(err) ? 'invalid_params' : 'execution_failed');
+        trace.recordCallEvent(base, 'attempt_failed', 'tool', callNo, 1, {
+          failureClass: 'Tool', subClass, message: (err as Error).message, willRetry: false, // 禁重试：attempt=1 即终局
+        });
+        throw new ToolTerminalFailure(subClass, (err as Error).message);
       }
-      return { outcome: 'denied', denied: gate };
     }
 
     const impl = this.resolveImpl(toolId);
@@ -137,6 +213,23 @@ export class ToolExecutor {
     throw new ToolTerminalFailure('internal_error', 'ToolExecutor 不可达路径');
   }
 
+  /** 拒绝处理（闸门与治理预检共用）：连续拦截计数 + policy_denied 留痕 + 达上限终局 */
+  private handleDenial(gate: PolicyDeniedResult, callNo: number): { outcome: 'denied'; denied: PolicyDeniedResult } {
+    const { base, trace } = this.opts;
+    const count = this.opts.getDenialCount() + 1;
+    this.opts.setDenialCount(count);
+    const evt = trace.recordCallEvent(base, 'policy_denied', 'tool', callNo, 1, {
+      toolId: gate.toolId, reasonCode: gate.reasonCode, consecutiveDenialCount: count, message: gate.message,
+    });
+    if (count >= this.opts.maxConsecutiveDenials) {
+      throw new PolicyBlockedError(
+        `连续被拒 ${count} 次达 maxConsecutiveDenials=${this.opts.maxConsecutiveDenials}（${gate.toolId}/${gate.reasonCode}）`,
+        count, evt.eventId,
+      );
+    }
+    return { outcome: 'denied', denied: gate };
+  }
+
   /** 实现解析层（§4.2-3）：builtin impls 优先；Miss 且有 external 分派 → MCP 调用桥 */
   private resolveImpl(toolId: string): ToolImpl | undefined {
     const builtin = this.opts.impls.get(toolId);
@@ -148,7 +241,9 @@ export class ToolExecutor {
     return undefined;
   }
 
-  /** 闸门顺序（A2 §8）：声明检查 → 当前登记等级 L3/L4（v1.1 审批分支）→ L2 受控字段 */
+  /** 闸门顺序（A2 §8 v1.2 批次三增补，P1-2）：声明检查 → 目标白名单（等级无关）→ 等级分支（L3 审批 / L4 拦截）→ L2 参数范围。
+   *  目标白名单从 L2 分支提升为等级无关步骤：凡 declared.controlledFields.targetWhitelist 存在即检查——
+   *  task-delegate 参数映射 agentId；既有 L2 工具维持字面 target 检查（行为零变更，回归断言随批）。paramRanges 维持 L2-only。 */
   private gate(toolId: string, args: Record<string, unknown>, callNo: number, approvedCallRef?: string): PolicyDeniedResult | null | 'needs_approval' {
     const declared = this.opts.declared.find((t) => t.toolId === toolId);
     if (!declared) {
@@ -158,6 +253,17 @@ export class ToolExecutor {
     const currentLevel = registry?.riskLevel;
     if (!registry || registry.status !== 'active') {
       return deny(toolId, 'not_declared_in_spec', `工具 ${toolId} 已 ${registry?.status ?? '注销'}，不可调用`);
+    }
+    // 目标白名单（等级无关，A2 §8 v1.2）：委托原语查 agentId，其余查字面 target
+    const whitelist = declared.controlledFields?.targetWhitelist;
+    if (whitelist) {
+      const param = toolId === DELEGATE_TOOL_ID ? 'agentId' : 'target';
+      if (param in args) {
+        const target = String(args[param]);
+        if (!whitelist.includes(target)) {
+          return deny(toolId, 'target_not_whitelisted', `目标 ${target} 不在白名单（共 ${whitelist.length} 项）`);
+        }
+      }
     }
     if (currentLevel === 'L4') {
       return deny(toolId, 'risk_level_blocked', `当前登记等级 L4（禁区，注册即拒为主路径，运行期闸门为兜底）`);
@@ -184,13 +290,6 @@ export class ToolExecutor {
               return deny(toolId, 'param_out_of_range', `参数 ${param}=${v} 越界（[${range.min ?? '-∞'}, ${range.max ?? '+∞'}]）`);
             }
           }
-        }
-      }
-      const whitelist = declared.controlledFields.targetWhitelist;
-      if (whitelist && 'target' in args) {
-        const target = String(args.target);
-        if (!whitelist.includes(target)) {
-          return deny(toolId, 'target_not_whitelisted', `目标 ${target} 不在白名单（共 ${whitelist.length} 项）`);
         }
       }
     }

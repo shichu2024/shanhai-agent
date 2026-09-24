@@ -91,6 +91,8 @@ export type TraceEventType =
   | 'approval_decided' // v1.1：approve/deny/惰性超时/superseded
   | 'task_paused' // v1.1：Running→Paused（run 进程退出前）
   | 'task_resumed' // v1.1：--resume 进程内 Paused→Running（resumedBy 双值均真实可达）
+  | 'task_delegated' // 第四阶段批次三（§4.4，D-30）：子任务创建时父 Trace 交接事件（childTaskId/agentId/agentVersionId/inputDigest）——A6 §3 封闭集增补，提案载体=设计文档 §4.4
+  | 'task_delegation_completed' // §4.4：子任务终态时父 Trace 交接事件（childTaskId/status/outputDigest）
   | 'memory_written' // v1.1（D-13）：任务成功输出写入记忆（memoryId/taskId/kind/contentDigest）
   | 'memory_loaded' // v1.1：注入上下文（injection=context 时；默认 off 不触发；degraded 回看清单载体）
   | 'memory_state_changed'; // v1.1：可信度状态迁移（含基线快照同事务，D-13）

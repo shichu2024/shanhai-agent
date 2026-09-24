@@ -5,7 +5,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { makeHarness, sampleSpec, registerAndRelease, validInput, validOutput, registerL3Tool, fakeSecret, type Harness } from './helpers.js';
 import { FIXTURE_TOOLS, inProcMcpHandler, type FixtureToolDef } from './fixtures/inProcMcpServer.js';
-import { InProcMcpTransport, type McpServerConfig } from '../src/mcp/client.js';
+import { InProcMcpTransport, ENVREF_PLACEHOLDER, type McpServerConfig } from '../src/mcp/client.js';
 import { connectMcpServer, toolIdOf } from '../src/mcp/connect.js';
 import { McpToolBridge } from '../src/mcp/bridge.js';
 import { RegistrationError } from '../src/modules/registry.js';
@@ -290,7 +290,7 @@ describe('WP-4B 批次二 A-16/D-34：MCP 结果注入防护', () => {
 // ============================================================
 
 describe('WP-4B 批次二 A-17：T3 envRefs 值位规则族（D-29）', () => {
-  const ENVREF_PLACEHOLDER = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+  // P3-1′（批次三收敛）：占位正则消费 mcp/client.ts 单一导出（原测试内第三份复制已消除）
 
   function scanTmp(files: Record<string, string>): ScanFinding[] {
     const dir = mkdtempSync(path.join(tmpdir(), 'shanhai-t3-'));
