@@ -13,8 +13,9 @@ import { redactValue, type RedactionPolicy } from './redaction.js';
 import { contentHash } from '../hash.js';
 import {
   runAgentLoop, ExecutorSucceeded, CancelRequestedSignal, TaskTimeoutSignal, TaskAbortedSignal, AbortRaceMarker,
-  ApprovalPauseSignal, promptHashOf, type ExecSpec, type PauseContext,
+  ApprovalPauseSignal, DelegationPauseSignal, promptHashOf, type ExecSpec, type PauseContext,
 } from '../runtime/executor.js';
+import type { DelegatePrimitive } from './toolExecutor.js';
 import type { FailureClass, FailureSubClass, TaskStatus, TraceEventType } from '../types.js';
 
 // A3 状态机驱动 + 审计边界一行规则：
@@ -43,6 +44,9 @@ export interface TaskRow {
   pausedDurationMs: number;
   cancelReason: string | null;
   assignmentSource: string | null;
+  /** 第四阶段批次三（§4.4）：委托树治理元数据（补迁移落列见 db.ts 注记——A3 规格-实现漂移登记） */
+  parentTaskId: string | null;
+  delegationDepth: number;
 }
 
 export class TaskCreationRejected extends Error {
@@ -142,8 +146,15 @@ export interface RunOptions {
 export class TaskManager {
   private readonly runningCancels = new Map<string, RunningCancelCtl>();
   private readonly forceCancellers = new Map<string, string>();
+  /** §4.4（批次三）：委托原语（组合根在构造后注入——Delegation 持有本实例引用，规避构造环） */
+  private delegatePrimitive: DelegatePrimitive | null = null;
 
   constructor(private readonly deps: TaskManagerDeps) {}
+
+  /** 组合根接线（Runtime）：委托原语注入 */
+  useDelegate(primitive: DelegatePrimitive): void {
+    this.delegatePrimitive = primitive;
+  }
 
   /** 任务创建（A3 §3.1 双路径分工：落库前查请求合法性，落库后防世界漂移） */
   createTask(agentId: string, input: unknown, who: string, opts: { allowDraft?: boolean; allowReviewed?: boolean } = {}): string {
@@ -329,13 +340,14 @@ export class TaskManager {
     return this.executeLoop(taskId, this.getTask(taskId), spec, strategy, { resumeState, timeoutCreditMs: pausedDurationMs });
   }
 
-  /** 执行循环 + 终态归因（正常与 resume 共用；挂起信号在此落库并返回 Paused 行） */
+  /** 执行循环 + 终态归因（正常与 resume 共用；挂起信号在此落库并返回 Paused 行）。
+   *  批次三（§4.4）：loopOpts.parentCancel = 嵌套子循环的父取消检查注入（P2-2 线程化）。 */
   private async executeLoop(
     taskId: string,
     row: TaskRow,
     spec: ExecSpec,
     strategy: 'native' | 'prompt' | null,
-    loopOpts: { resumeState?: PauseContext; timeoutCreditMs?: number } = {},
+    loopOpts: { resumeState?: PauseContext; timeoutCreditMs?: number; parentCancel?: { requested(): boolean } } = {},
   ): Promise<TaskRow> {
     const { deps } = this;
     const base = this.baseOf(row);
@@ -355,6 +367,16 @@ export class TaskManager {
         abortReject?.(new AbortRaceMarker());
       },
     });
+    // §4.4：委托原语任务侧上下文（治理预检 + impl 锚）；父取消 = graceful 本地标志 ∨ 持久化 abortRequested
+    // （P2-2：该检查函数注入嵌套子循环，子循环在原子调用边界代查——「父取消检查函数注入」新管道）
+    const delegateTask = this.delegatePrimitive
+      ? {
+          parentTaskId: taskId,
+          delegationDepth: row.delegationDepth ?? 0,
+          isParentCancelRequested: () => cancelRequested || this.getTask(taskId).abortRequested === 1,
+        }
+      : undefined;
+    const delegate = delegateTask && this.delegatePrimitive ? { primitive: this.delegatePrimitive, task: delegateTask } : undefined;
 
     // v1.1（D-13）记忆注入：仅 memoryPolicy.persistent 且显式 injection='context'（默认 off——无任何注入行为）；
     // 注入清单留存供 Failed 终态 contradictionCount 判定（「注入且 Failed」可判近似，误差已知接受）。
@@ -379,13 +401,15 @@ export class TaskManager {
         toolImpls: deps.toolImpls,
         externalCall: deps.externalCall,
         ledger, strategy,
-        isCancelRequested: () => cancelRequested,
+        // §4.4（P2-2 线程化）：嵌套子循环在本任务取消检查之上叠加父取消代查
+        isCancelRequested: () => cancelRequested || (loopOpts.parentCancel?.requested() ?? false),
         isAbortRequested: () => this.getTask(taskId).abortRequested === 1, // 跨进程 abortRequested 持久化标志（A3 §2）
         abortPromise,
         resumeState: loopOpts.resumeState,
         taskStartedAtMs: row.startedAt ? Date.parse(row.startedAt) : undefined,
         timeoutCreditMs: loopOpts.timeoutCreditMs,
         memoryInjection,
+        delegate, // §4.4：委托原语接线（task-delegate 特殊类别分派）
         getDenialCount: () => (this.getTask(taskId) as TaskRow).consecutiveDenialCount,
         setDenialCount: (n) => deps.db.prepare('UPDATE task_record SET consecutiveDenialCount = ? WHERE taskId = ?').run(n, taskId),
         addAttempt: () => deps.db.prepare('UPDATE task_record SET attemptCount = attemptCount + 1 WHERE taskId = ?').run(taskId),
@@ -416,6 +440,35 @@ export class TaskManager {
           return this.getTask(taskId);
         }
         return this.persistPause(taskId, base, spec, err.pause);
+      }
+      if (err instanceof DelegationPauseSignal) {
+        // §4.4 委托等待挂起（R-2 写序：子 PauseSnapshot 已先行落库）：取消/中止优先，同 MEDIUM-3；
+        // 复审 HIGH-1 修复：父在委托边界因取消/中止终局时，取消传播同样覆盖非终态子任务（与 cancel() paused 分支同不变式）
+        if (cancelRequested) {
+          this.cancelDescendants(taskId, this.forceCancellers.get(taskId) ?? 'runtime');
+          this.mapTerminalFailure(taskId, base, spec, ledger, new CancelRequestedSignal());
+          return this.getTask(taskId);
+        }
+        if (this.getTask(taskId).abortRequested === 1) {
+          this.cancelDescendants(taskId, this.forceCancellers.get(taskId) ?? 'runtime');
+          this.mapTerminalFailure(taskId, base, spec, ledger, new TaskAbortedSignal({ callNo: 0, callKind: 'model', phase: 'boundary' }));
+          return this.getTask(taskId);
+        }
+        return this.persistDelegationWait(taskId, base, err.pause);
+      }
+      // §4.4（P2-2 线程化）：嵌套子循环因父取消在原子调用边界中止 → 子 Cancelled(superseded)
+      if (err instanceof CancelRequestedSignal && (loopOpts.parentCancel?.requested() ?? false)) {
+        this.deps.state.transition(taskId, 'cancelled', { endedAt: nowNs(), cancelReason: 'superseded' });
+        trace_event(this.deps, base, 'task_cancelled', {
+          cancelReason: 'superseded', mode: 'graceful',
+          note: '父任务取消传播（P2-2 线程化：子循环原子调用边界代查父取消标志）',
+        });
+        return this.getTask(taskId);
+      }
+      // §4.4：委托原语重抛的父取消信号伴随持久化 abortRequested → 按 abort 语义终局（跨进程 force 中止）
+      if (err instanceof CancelRequestedSignal && this.getTask(taskId).abortRequested === 1) {
+        this.mapTerminalFailure(taskId, base, spec, ledger, new TaskAbortedSignal({ callNo: 0, callKind: 'model', phase: 'boundary' }));
+        return this.getTask(taskId);
       }
       this.mapTerminalFailure(taskId, base, spec, ledger, err);
       // v1.1（D-13 / F-7）：Failed 终态同步——注入列表逐条 contradictionCount+1（注入清单在 memory_loaded 已留痕）
@@ -451,6 +504,78 @@ export class TaskManager {
       requestId: request.requestId, toolId, riskLevel: 'L3', timeoutAt: request.timeoutAt, callRef: request.callRef,
     });
     return this.getTask(taskId);
+  }
+
+  /**
+   * §4.4（批次三）：委托等待挂起落库（R-2 写序第 2 步——子 PauseSnapshot 已在第 1 步先行落库）：
+   * 父 PauseSnapshot（载荷含 delegation.childTaskId 锚）→ Running→Paused → Trace(task_paused)。
+   * 不创建新 ApprovalRequest——第二次人工介入挂子 taskId（子的 ApprovalRequest），委托本身已由
+   * 第一次父级审批放行（resume 放行锚点 requestForCallRef(nextCallRef) 复用该 approved 请求，幂等可重复 resume）。
+   */
+  private persistDelegationWait(taskId: string, base: TaskBase, pause: PauseContext & { toolId: string; childTaskId: string; note: string }): TaskRow {
+    const { deps } = this;
+    const { toolId, toolCallNo, childTaskId, note, ...contextOnly } = pause;
+    void toolId;
+    // 快照载荷：PauseContext + delegation 锚（同 persistPause 过同一脱敏管道——结构级 walk 保形）
+    const contextWithAnchor = { ...contextOnly, delegation: { childTaskId, note } };
+    deps.approvals.saveSnapshot(
+      taskId,
+      JSON.stringify(redactValue(contextWithAnchor, deps.redaction)),
+      JSON.stringify({ modelCallNo: pause.modelCallNo, toolCallNo: pause.toolCallNo }),
+      String(pause.toolCallNo), // nextCallRef（与首次审批挂起同锚点——approved 请求复用）
+    );
+    deps.state.transition(taskId, 'paused');
+    trace_event(deps, base, 'task_paused', {
+      reason: 'delegation_child_wait', childTaskId, callRef: String(pause.toolCallNo),
+      note: `${note}（resume 时序规范：先子后父；父幂等保持 Paused）`,
+    });
+    return this.getTask(taskId);
+  }
+
+  /**
+   * §4.4（批次三）：委托原语驱动的嵌套子执行（阻塞式，runAgentLoop 递归经此入 TaskManager 全链）。
+   * 父取消检查注入（P2-2）：子循环在原子调用边界代查 graceful/abort。
+   */
+  async runDelegatedChild(taskId: string, parentCancel: { requested(): boolean }): Promise<TaskRow> {
+    const { deps } = this;
+    const row = this.getTask(taskId);
+    if (row.status !== 'queued') {
+      throw new Error(`委托子任务 ${taskId} 状态为 ${row.status}，仅 Queued 可嵌套执行`);
+    }
+    const spec = JSON.parse(deps.registry.getVersion(row.agentVersionId)!.specSnapshot) as ExecSpec;
+    const base = this.baseOf(row);
+    if (!deps.state.transition(taskId, 'running', { startedAt: nowNs() }, 'queued')) {
+      throw new Error(`委托子任务 ${taskId} 状态竞争：Queued→Running 迁移失败（当前 ${this.getTask(taskId).status}）`);
+    }
+    const bindingSnapshot = {
+      toolVersions: spec.toolPolicy.tools.map((t) => {
+        const reg = deps.registry.getTool(t.toolId);
+        return { toolId: t.toolId, implVersion: reg?.implVersion ?? 'unresolved' };
+      }),
+      modelId: spec.modelPolicy.allowedModels[0],
+      promptHash: promptHashOf(row.specContentHash),
+    };
+    trace_event(deps, base, 'task_started', { bindingSnapshot, delegatedFrom: row.parentTaskId });
+    return this.executeLoop(taskId, this.getTask(taskId), spec, null, { parentCancel });
+  }
+
+  /** §4.4 孤儿处置：父终局（取消）时取消传播覆盖已创建的非终态子任务（superseded）。 */
+  private cancelDescendants(parentTaskId: string, who: string): void {
+    const { deps } = this;
+    const children = deps.db.prepare('SELECT taskId, status FROM task_record WHERE parentTaskId = ?').all(parentTaskId) as { taskId: string; status: string }[];
+    for (const c of children) {
+      if (c.status === 'succeeded' || c.status === 'failed' || c.status === 'cancelled') continue;
+      // 子 Paused/Queued/Created：立即迁移 superseded + pending 审批作废 + 删快照；
+      // 子 Running 不可达（嵌套中父必在执行，§4.4 崩溃窗口矩阵），到达即按 superseded 终局兜底
+      if (!deps.state.transition(c.taskId, 'cancelled', { endedAt: nowNs(), cancelReason: 'superseded' })) continue;
+      deps.approvals.supersedePending(c.taskId, who);
+      deps.approvals.deleteSnapshot(c.taskId);
+      const childRow = this.getTask(c.taskId);
+      trace_event(deps, this.baseOf(childRow), 'task_cancelled', {
+        cancelReason: 'superseded', mode: 'graceful',
+        note: '父任务取消传播（孤儿处置：取消传播覆盖，§4.4）',
+      });
+    }
   }
 
   private mapTerminalFailure(taskId: string, base: TaskBase, _spec: ExecSpec, ledger: TaskLedger, err: unknown): void {
@@ -555,6 +680,8 @@ export class TaskManager {
       }
       deps.approvals.supersedePending(taskId, who);
       deps.approvals.deleteSnapshot(taskId);
+      // §4.4 孤儿处置：委托等待挂起的父被取消 → 非终态子任务取消传播覆盖（superseded）
+      this.cancelDescendants(taskId, who);
       trace_event(deps, base, 'task_cancelled', {
         cancelReason, mode, abortRequestedBy: opts.force ? who : null,
         note: '挂起态无在飞原子调用（立即迁移；pending 审批置 superseded，快照已删）',

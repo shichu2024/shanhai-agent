@@ -10,6 +10,7 @@ import { ApprovalManager } from './modules/approval.js';
 import { MemoryManager } from './modules/memory.js';
 import { EvolutionManager } from './modules/evolution.js';
 import { BUILTIN_TOOL_DEFS, BUILTIN_TOOL_VERSION, createBuiltinImpls } from './tools/builtin.js';
+import { Delegation } from './runtime/delegation.js';
 import { McpToolBridge } from './mcp/bridge.js';
 import type { McpServerConfig, McpTransport } from './mcp/client.js';
 
@@ -53,6 +54,8 @@ export class Runtime {
   readonly memories: MemoryManager;
   readonly evolutions: EvolutionManager;
   readonly toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
+  /** 第四阶段批次三（§4.4）：鲲鹏委托原语（task-delegate impl + 治理预检） */
+  readonly delegation: Delegation;
   /** 第四阶段批次一（§4.2）：mcpServers 配置段（connect 流水线与调用桥共同消费） */
   readonly mcpServers: Record<string, McpServerConfig>;
   readonly mcpBridge: McpToolBridge;
@@ -96,6 +99,19 @@ export class Runtime {
       dispatchRoll: opts.dispatchRoll,
       redaction,
     });
+    // 第四阶段批次三（§4.4，D-30）：委托原语接线——Delegation 持有 TaskManager 引用（阻塞式嵌套执行），
+    // 构造后注入以规避构造环；task-delegate 经 ToolExecutor 委托原语特殊类别分派至此。
+    this.delegation = new Delegation({
+      db: handles.db,
+      registry: this.registry,
+      trace: this.trace,
+      state: this.state,
+      audit: this.audit,
+      redaction,
+      dispatchRoll: opts.dispatchRoll,
+      tasks: this.tasks,
+    });
+    this.tasks.useDelegate(this.delegation);
     Object.defineProperty(this, 'db', { value: handles.db });
   }
 

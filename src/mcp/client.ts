@@ -53,13 +53,19 @@ export interface McpServerConfig {
 }
 
 /**
+ * envRefs 占位正则（P3-1′ 单一导出源，批次三收敛）：值必须是 ${VAR} 占位形态。
+ * 此前内联于本函数、releaseScan（ENVREF_PLACEHOLDER）与测试三处复制——现收敛为单一导出、三处消费同一源（消除漂移风险）。
+ */
+export const ENVREF_PLACEHOLDER = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+
+/**
  * envRefs 解析（spawn 时注入）：值必须是 ${VAR} 占位形态，否则 fail-fast；
  * 环境变量缺失同样 fail-fast——不降级、不留明文通道。
  */
 export function resolveEnvRefs(envRefs: Record<string, string>, env: NodeJS.ProcessEnv): Record<string, string> {
   const resolved: Record<string, string> = {};
   for (const [key, ref] of Object.entries(envRefs)) {
-    const m = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(ref);
+    const m = ENVREF_PLACEHOLDER.exec(ref);
     if (!m) {
       throw new Error(`envRefs.${key} 值必须为 \${VAR} 环境变量引用形态（收到：非占位值；D-29 凭据策略——值永不落配置/库/Trace）`);
     }

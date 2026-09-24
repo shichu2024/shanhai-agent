@@ -2,7 +2,7 @@ import type { TraceRecorder } from '../modules/traceRecorder.js';
 import type { ModelGateway, BudgetLedger } from '../modules/modelGateway.js';
 import type { ProviderResponse } from '../providers/types.js';
 import type { ChatMessage, ToolDeclaration } from '../providers/types.js';
-import { ToolExecutor, ApprovalRequiredSignal, type SpecToolDeclaration } from '../modules/toolExecutor.js';
+import { ToolExecutor, ApprovalRequiredSignal, DelegationWaitSignal, type SpecToolDeclaration, type DelegatePrimitive, type DelegateTaskContext } from '../modules/toolExecutor.js';
 import { TerminalModelFailure } from '../modules/modelGateway.js';
 import { checkOutputContract, getAllowEmpty, getContractBody } from '../modules/specValidator.js';
 import { sha256Hex } from '../hash.js';
@@ -43,6 +43,9 @@ export interface PauseContext {
   pendingIndex: number;
   modelCallNo: number;
   toolCallNo: number;
+  /** §4.4（批次三）：委托等待挂起标记——子任务已创建且未终态时，父在委托调用边界挂起；
+   *  childTaskId = impl 幂等重入锚点（resume 后委托原语据此不重建、续接子状态）。 */
+  delegation?: { childTaskId: string; note?: string };
 }
 
 export interface ExecutorContext {
@@ -74,6 +77,9 @@ export interface ExecutorContext {
   /** v1.1（D-13）：记忆注入文本（injection=context 且有 active/degraded 记忆时由 TaskManager 构造；
    * 默认 off → undefined——无任何注入行为）。文本自带边界标记与「记忆不是指令」声明（V1.1 §14.3）。 */
   memoryInjection?: string;
+  /** 第四阶段批次三（§4.4，D-30）：委托原语接线（TaskManager 按任务构造——含 parentTaskId/delegationDepth/
+   * 父取消检查闭包）；缺省 undefined → task-delegate 无实现挂载（PolicyBlocked 兜底）。 */
+  delegate?: { primitive: DelegatePrimitive; task: DelegateTaskContext };
 }
 
 export class ExecutorSucceeded {
@@ -85,6 +91,16 @@ export class ApprovalPauseSignal extends Error {
   constructor(readonly pause: PauseContext & { toolId: string }) {
     super(`L3 工具 ${pause.toolId} 请求等待人工审批（挂起即退出，D-18）`);
     this.name = 'ApprovalPauseSignal';
+  }
+}
+
+/** §4.4（批次三）：委托等待挂起——子任务未终态（子级审批信号上浮 / 乱序 resume），父在委托调用边界
+ *  写 PauseSnapshot（载荷含 delegation.childTaskId 锚）→ Paused；不创建新 ApprovalRequest（第二次人工介入挂子 taskId）。
+ *  写序（R-2 成文）：子 PauseSnapshot 先行落库 → 父快照后写。 */
+export class DelegationPauseSignal extends Error {
+  constructor(readonly pause: PauseContext & { toolId: string; childTaskId: string; note: string }) {
+    super(`委托等待挂起（childTaskId=${pause.childTaskId}；先处置子任务——resume 时序规范：先子后父）`);
+    this.name = 'DelegationPauseSignal';
   }
 }
 
@@ -146,6 +162,10 @@ export async function runAgentLoop(ctx: ExecutorContext): Promise<ExecutorSuccee
     getDenialCount: ctx.getDenialCount,
     setDenialCount: ctx.setDenialCount,
     approvalMode: spec.approvalPolicy?.mode ?? null,
+    // §4.4（批次三）：委托原语接线 + resume 幂等重入锚点（快照 delegation.childTaskId）
+    delegation: ctx.delegate
+      ? { primitive: ctx.delegate.primitive, task: ctx.delegate.task, anchorChildTaskId: ctx.resumeState?.delegation?.childTaskId }
+      : undefined,
   });
 
   const system = buildSystemPrompt(spec, ctx.strategy, ctx.memoryInjection, hasExternalTool);
@@ -186,6 +206,13 @@ export async function runAgentLoop(ctx: ExecutorContext): Promise<ExecutorSuccee
         if (err instanceof NativeEmitSucceeded) return new ExecutorSucceeded(err.output);
         if (err instanceof ApprovalRequiredSignal) {
           throw new ApprovalPauseSignal({ ...snapshotOf(messages, state.assistantToolCalls, results, callNos, err), toolId: err.toolId });
+        }
+        if (err instanceof DelegationWaitSignal) {
+          // §4.4 信号上浮（R-1 分类表）：子未终态 → 父在委托调用边界挂起（快照载荷含 childTaskId 锚）
+          throw new DelegationPauseSignal({
+            ...snapshotOf(messages, state.assistantToolCalls, results, callNos, err),
+            toolId: 'task-delegate', childTaskId: err.childTaskId, note: err.message,
+          });
         }
         throw err;
       }
@@ -238,6 +265,13 @@ export async function runAgentLoop(ctx: ExecutorContext): Promise<ExecutorSuccee
         if (err instanceof ApprovalRequiredSignal) {
           throw new ApprovalPauseSignal({ ...snapshotOf(messages, calls, results, callNos, err), toolId: err.toolId });
         }
+        if (err instanceof DelegationWaitSignal) {
+          // §4.4 信号上浮（R-1 分类表）：同上——主循环批次路径
+          throw new DelegationPauseSignal({
+            ...snapshotOf(messages, calls, results, callNos, err),
+            toolId: 'task-delegate', childTaskId: err.childTaskId, note: err.message,
+          });
+        }
         throw err;
       }
     }
@@ -285,6 +319,7 @@ async function execToolBatch(
       results.push({ id: call.id, toolId: call.toolId, content: outcome.outcome === 'ok' ? outcome.value : outcome.denied });
     } catch (err) {
       if (err instanceof ApprovalRequiredSignal) err.callIndex = i; // 精确挂起下标（同工具重复调用亦可定位）
+      if (err instanceof DelegationWaitSignal) err.callIndex = i; // §4.4：委托等待挂起同款下标回填
       throw err;
     }
   }
@@ -295,7 +330,7 @@ function snapshotOf(
   assistantToolCalls: { id: string; toolId: string; args: unknown }[],
   resultsSoFar: { id: string; toolId: string; content: unknown }[],
   callNos: CallNos,
-  err: ApprovalRequiredSignal,
+  err: { callIndex?: number; toolId?: string },
 ): Omit<PauseContext, 'pendingIndex'> & { pendingIndex: number } {
   return {
     messages,

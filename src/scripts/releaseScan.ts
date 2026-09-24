@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, existsSync, openSync, readSync, closeSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { ENVREF_PLACEHOLDER } from '../mcp/client.js';
 
 // T3 发布安全扫描（A5 §4-3）：已知密钥格式正则 + 模型权重文件检查（扩展名/魔数/结构嗅探）。
 // 零命中方为通过；命中即拒绝发布（退出码 1）。与开源前置待办（定稿 §11-2）复用同一实现。
@@ -189,8 +190,8 @@ function scanText(file: string, rel: string, compiled: { name: string; re: RegEx
 }
 
 /** envRefs 值位规则族（§4.3-6，D-29）：与 resolveEnvRefs 占位正则同源——值非 ${VAR} 形态即命中。
+ *  P3-1′（批次三收敛）：占位正则收敛为 mcp/client.ts 单一导出（ENVREF_PLACEHOLDER），本处消费同一源（原三处复制已消除）。
  *  只治理键名 envRefs 的对象值位（其他键下的字面量不误报）；JSON 解析失败跳过（其余规则族照常）。 */
-const ENVREF_PLACEHOLDER = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 
 function scanEnvRefs(file: string, rel: string, findings: ScanFinding[]): void {
   let parsed: unknown;
