@@ -79,11 +79,21 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
         ? { dismissCooldownDays: raw.evolution.dismissCooldownDays }
         : undefined,
     mcpServers: parseMcpServers(raw.mcpServers),
-    mcp:
-      raw.mcp?.resultMaxChars !== undefined && Number.isFinite(raw.mcp.resultMaxChars) && raw.mcp.resultMaxChars > 0
-        ? { resultMaxChars: Math.floor(raw.mcp.resultMaxChars) }
-        : undefined,
+    mcp: parseMcpSection(raw.mcp),
   };
+}
+
+/** 批次四（P3-2 随批携带）：mcp.resultMaxChars 非法值（≤0 / 非数字）fail-fast 结构化报错——
+ *  与 D-29 envRefs 解析 fail-fast 语义对齐（原批次二为静默回退缺省，行为变更属预期演进） */
+function parseMcpSection(section: { resultMaxChars?: number } | undefined): { resultMaxChars?: number } | undefined {
+  if (!section || section.resultMaxChars === undefined) return undefined;
+  const v = section.resultMaxChars;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) {
+    throw new ConfigError(
+      `配置非法：mcp.resultMaxChars 必须为正数字（收到：${typeof v === 'number' ? String(v) : typeof v}）——fail-fast 拒绝启动，不静默回退缺省（P3-2，与 D-29 envRefs 解析语义对齐）`,
+    );
+  }
+  return { resultMaxChars: Math.floor(v) };
 }
 
 /** 第四阶段批次一（§4.2）：mcpServers 段解析——transport 限 stdio（http/sse 字段位预留本期拒绝） */

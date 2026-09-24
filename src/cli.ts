@@ -31,6 +31,7 @@ function usage(): never {
   shanhai agent report <agentId> [--since <RFC3339>]          （分组通过率 + promote 判据 + 旁挂三单列）
   shanhai agent list <agentId>
   shanhai agent show <agentId> [<versionId>]
+  shanhai agent card <agentId> [versionId]                            （Agent Card 只读派生导出；缺省当前指针版本，永不存储）
   shanhai task create <agentId> <input.json> [--by <who>] [--draft|--reviewed]
   shanhai task run <taskId> [--strategy native|prompt] [--resume] [--resumed-by approve-spawn|manual-resume]
   shanhai task cancel <taskId> [--by <who>] [--force]              （--force = abort 立即中止/跨进程登记）
@@ -152,6 +153,11 @@ async function main(): Promise<void> {
           process.exit(1);
         }
         console.log(JSON.stringify({ ...row, specSnapshot: JSON.parse(row.specSnapshot) }, null, 2));
+      } else if (sub === 'card') {
+        // 批次四（§4.5，D-33）：Agent Card 只读派生导出——缺省当前指针版本；派生制品永不存储
+        const [agentId, maybeVersion] = pos;
+        if (!agentId) usage();
+        console.log(JSON.stringify(rt.registry.agentCard(agentId, maybeVersion), null, 2));
       } else usage();
       break;
     }
