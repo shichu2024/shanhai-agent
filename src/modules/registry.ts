@@ -29,7 +29,20 @@ export interface ToolRow {
   controlledFieldsSchema: string | null;
   status: 'active' | 'retired';
   registeredAt: string;
+  /** 第四阶段批次一（§4.1）：来源可追溯（builtin / mcp:<serverName>）；存量行 NULL */
+  source?: string | null;
+  /** 登记人（external 评级断言留痕；P3-3：辅助留痕，非审计强证据） */
+  registeredBy?: string | null;
+  /** 人类可读描述（MCP discovery 时取得） */
+  description?: string | null;
 }
+
+/** registerTool 入参（元数据 3 列可选——builtin 种子登记不携带） */
+export type ToolRegistration = Omit<ToolRow, 'registeredAt' | 'source' | 'registeredBy' | 'description'> & {
+  source?: string | null;
+  registeredBy?: string | null;
+  description?: string | null;
+};
 
 export class RegistrationError extends Error {
   constructor(
@@ -53,20 +66,23 @@ export class Registry {
 
   // ---------- Tool Registry（A2 附录 A） ----------
 
-  registerTool(def: Omit<ToolRow, 'registeredAt'>, who: string): void {
+  registerTool(def: ToolRegistration, who: string): void {
     const existing = this.getTool(def.toolId);
     if (!existing) {
       this.db
         .prepare(
-          `INSERT INTO tool_registry (toolId, name, kind, riskLevel, implVersion, paramSchema, controlledFieldsSchema, status, registeredAt)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO tool_registry (toolId, name, kind, riskLevel, implVersion, paramSchema, controlledFieldsSchema, status, registeredAt, source, registeredBy, description)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           def.toolId, def.name, def.kind, def.riskLevel, def.implVersion,
           def.paramSchema, def.controlledFieldsSchema ?? null, def.status, nowNs(),
+          def.source ?? null, def.registeredBy ?? null, def.description ?? null,
         );
       this.audit.versionEvent('tool_registered', who, def.toolId, {
         toolId: def.toolId, riskLevel: def.riskLevel, implVersion: def.implVersion,
+        ...(def.source !== undefined && def.source !== null ? { source: def.source } : {}),
+        ...(def.registeredBy !== undefined && def.registeredBy !== null ? { registeredBy: def.registeredBy } : {}),
       });
       return;
     }
@@ -77,13 +93,33 @@ export class Registry {
     }
     this.db
       .prepare(
-        `UPDATE tool_registry SET name=?, kind=?, riskLevel=?, implVersion=?, paramSchema=?, controlledFieldsSchema=?, status=? WHERE toolId=?`,
+        `UPDATE tool_registry SET name=?, kind=?, riskLevel=?, implVersion=?, paramSchema=?, controlledFieldsSchema=?, status=?, source=?, registeredBy=?, description=? WHERE toolId=?`,
       )
-      .run(def.name, def.kind, def.riskLevel, def.implVersion, def.paramSchema, def.controlledFieldsSchema ?? null, def.status, def.toolId);
+      .run(
+        def.name, def.kind, def.riskLevel, def.implVersion, def.paramSchema,
+        def.controlledFieldsSchema ?? null, def.status, def.source ?? null, def.registeredBy ?? null, def.description ?? null, def.toolId,
+      );
     this.audit.versionEvent('tool_reregistered', who, def.toolId, {
       toolId: def.toolId,
       riskLevel: { old: existing.riskLevel, new: def.riskLevel },
       implVersion: { old: existing.implVersion, new: def.implVersion },
+      ...(def.source !== undefined && def.source !== null ? { source: def.source } : {}),
+      ...(def.registeredBy !== undefined && def.registeredBy !== null ? { registeredBy: def.registeredBy } : {}),
+    });
+  }
+
+  /** §4.1 退役：status=retired（在飞调用点按「已退役不可调用」拦截——既有闸门行为）；审计 tool_reregistered 载荷 action=retire */
+  retireTool(toolId: string, who: string): void {
+    const existing = this.getTool(toolId);
+    if (!existing) {
+      throw new Error(`工具 ${toolId} 不存在（retire 拒绝：无此登记）`);
+    }
+    this.db.prepare(`UPDATE tool_registry SET status='retired' WHERE toolId=?`).run(toolId);
+    this.audit.versionEvent('tool_reregistered', who, toolId, {
+      toolId,
+      action: 'retire',
+      riskLevel: existing.riskLevel,
+      ...(existing.source ? { source: existing.source } : {}),
     });
   }
 
@@ -91,8 +127,12 @@ export class Registry {
     return (this.db.prepare('SELECT * FROM tool_registry WHERE toolId = ?').get(toolId) as ToolRow | undefined) ?? null;
   }
 
-  listTools(): ToolRow[] {
-    return this.db.prepare('SELECT * FROM tool_registry ORDER BY toolId').all() as ToolRow[];
+  /** §4.1 `tool list` 模块面：kind / riskLevel 过滤（CLI 透传） */
+  listTools(filter: { kind?: 'builtin' | 'external'; riskLevel?: RiskLevel } = {}): ToolRow[] {
+    const rows = this.db.prepare('SELECT * FROM tool_registry ORDER BY toolId').all() as ToolRow[];
+    return rows.filter((t) =>
+      (filter.kind === undefined || t.kind === filter.kind) && (filter.riskLevel === undefined || t.riskLevel === filter.riskLevel),
+    );
   }
 
   // ---------- Agent Registry（A1 §7 / A5） ----------

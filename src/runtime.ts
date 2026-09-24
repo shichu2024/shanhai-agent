@@ -10,6 +10,9 @@ import { ApprovalManager } from './modules/approval.js';
 import { MemoryManager } from './modules/memory.js';
 import { EvolutionManager } from './modules/evolution.js';
 import { BUILTIN_TOOL_DEFS, BUILTIN_TOOL_VERSION, createBuiltinImpls } from './tools/builtin.js';
+import { McpToolBridge } from './mcp/bridge.js';
+import type { McpServerConfig, McpTransport } from './mcp/client.js';
+
 import type { ModelProvider } from './providers/types.js';
 import { loadRuntimeConfig, buildProviderFromConfig, modelWhitelistOf } from './config.js';
 import { defaultRedactionPolicy, type RedactionPolicy } from './modules/redaction.js';
@@ -29,6 +32,10 @@ export interface RuntimeOptions {
   dispatchRoll?: () => number;
   /** 批次三（§4.5-4，D-25）：dismiss 冷却窗天数（config.local.json evolution 段；缺省 7） */
   evolutionDismissCooldownDays?: number;
+  /** 第四阶段批次一（§4.2）：MCP server 配置段（运行时配置平台层）；缺省 = 无外部工具 */
+  mcpServers?: Record<string, McpServerConfig>;
+  /** 测试注入：in-proc transport 工厂（夹具主形态，§14.2-2）；缺省 = stdio 子进程 */
+  mcpTransportFactory?: (name: string, cfg: McpServerConfig) => McpTransport;
 }
 
 export class Runtime {
@@ -44,6 +51,9 @@ export class Runtime {
   readonly memories: MemoryManager;
   readonly evolutions: EvolutionManager;
   readonly toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
+  /** 第四阶段批次一（§4.2）：mcpServers 配置段（connect 流水线与调用桥共同消费） */
+  readonly mcpServers: Record<string, McpServerConfig>;
+  readonly mcpBridge: McpToolBridge;
 
   constructor(opts: RuntimeOptions) {
     const handles = openDatabase(opts.dataDir);
@@ -60,6 +70,9 @@ export class Runtime {
     this.state = new StateManager(handles.db, this.trace, this.failures);
     this.gateway = new ModelGateway(opts.provider, opts.whitelist);
     this.toolImpls = createBuiltinImpls(opts.repoRoot, redaction);
+    // 第四阶段批次一（§4.2-3 调用桥）：external 工具经同一 ToolExecutor 循环分派至 MCP client
+    this.mcpServers = opts.mcpServers ?? {};
+    this.mcpBridge = new McpToolBridge({ db: handles.db, servers: this.mcpServers, transportFactory: opts.mcpTransportFactory });
     this.approvals = new ApprovalManager({
       db: handles.db,
       trace: this.trace,
@@ -74,6 +87,7 @@ export class Runtime {
       state: this.state,
       gateway: this.gateway,
       toolImpls: this.toolImpls,
+      externalCall: (toolId, args) => this.mcpBridge.call(toolId, args),
       audit: this.audit,
       approvals: this.approvals,
       memories: this.memories,
@@ -93,6 +107,7 @@ export class Runtime {
       whitelist: modelWhitelistOf(config),
       redaction: config.redaction,
       evolutionDismissCooldownDays: config.evolution?.dismissCooldownDays,
+      mcpServers: config.mcpServers,
     });
   }
 
@@ -104,8 +119,12 @@ export class Runtime {
     repoRoot: string,
     redaction?: RedactionPolicy,
     dispatchRoll?: () => number,
+    extra: { mcpServers?: Record<string, McpServerConfig>; mcpTransportFactory?: (name: string, cfg: McpServerConfig) => McpTransport } = {},
   ): Runtime {
-    return new Runtime({ dataDir, repoRoot, provider, whitelist: new Set(whitelist), redaction, dispatchRoll });
+    return new Runtime({
+      dataDir, repoRoot, provider, whitelist: new Set(whitelist), redaction, dispatchRoll,
+      mcpServers: extra.mcpServers, mcpTransportFactory: extra.mcpTransportFactory,
+    });
   }
 
   /** 启动：内置工具登记 + 崩溃恢复（索引对账先于崩溃标记，A6 §6.1 次序约束） */
@@ -136,6 +155,7 @@ export class Runtime {
   }
 
   close(): void {
+    void this.mcpBridge.close(); // MCP 按需连接释放（不阻塞关闭）
     (this as unknown as { db: import('better-sqlite3').Database }).db.close();
   }
 }

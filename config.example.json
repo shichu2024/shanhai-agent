@@ -16,5 +16,14 @@
   "evolution": {
     "$comment": "可选段（批次三 §4.5-4，D-25）：演进治理运行时配置。dismissCooldownDays = dismiss 冷却窗天数（窗内同 agentId+trigger 不重生候选，到期恢复生成）；缺省 7。",
     "dismissCooldownDays": 7
+  },
+  "mcpServers": {
+    "$comment": "可选段（第四阶段 §4.2）：MCP server 接入（首期仅 stdio transport）。envRefs 为凭据唯一通道——值必须为 ${VAR} 环境变量引用占位，值永不落配置/库/Trace 任何落盘面；server 本体由使用方自行安装（不入发布物）。",
+    "weather": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@example/mcp-weather"],
+      "envRefs": { "API_KEY": "${WEATHER_API_KEY}" }
+    }
   }
 }

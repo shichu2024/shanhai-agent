@@ -47,6 +47,9 @@ export interface ToolExecutorOptions {
   setDenialCount(n: number): void;
   /** v1.1（A2 §8）：Spec 声明 approvalPolicy.mode=onHighRisk 时 L3 走审批分支（挂起），其余 L3 仍拦截 */
   approvalMode?: 'onHighRisk' | 'never' | null;
+  /** 第四阶段批次一（§4.2-3 调用桥）：impls Miss 时的 external 分派（kind=external → MCP tools/call）；
+   * attempt/timeout/归因由本执行器既有循环承载（同构，A-14）。 */
+  externalCall?: (toolId: string, args: Record<string, unknown>) => Promise<unknown>;
 }
 
 /** L3 调用等待审批（A2 §8 v1.1 审批分支）——由执行循环接管：写 PauseSnapshot + ApprovalRequest → Paused */
@@ -101,7 +104,7 @@ export class ToolExecutor {
       return { outcome: 'denied', denied: gate };
     }
 
-    const impl = this.opts.impls.get(toolId);
+    const impl = this.resolveImpl(toolId);
     if (!impl) {
       // 声明且登记但运行时未挂实现：内部缺陷信号
       throw new PolicyBlockedError(`工具 ${toolId} 无实现挂载（Runtime internal）`, this.opts.getDenialCount(), null);
@@ -132,6 +135,17 @@ export class ToolExecutor {
       }
     }
     throw new ToolTerminalFailure('internal_error', 'ToolExecutor 不可达路径');
+  }
+
+  /** 实现解析层（§4.2-3）：builtin impls 优先；Miss 且有 external 分派 → MCP 调用桥 */
+  private resolveImpl(toolId: string): ToolImpl | undefined {
+    const builtin = this.opts.impls.get(toolId);
+    if (builtin) return builtin;
+    if (this.opts.externalCall) {
+      const external = this.opts.externalCall;
+      return (args: Record<string, unknown>) => external(toolId, args); // 桥自身校验 kind=external（非 external 拒绝分派）
+    }
+    return undefined;
   }
 
   /** 闸门顺序（A2 §8）：声明检查 → 当前登记等级 L3/L4（v1.1 审批分支）→ L2 受控字段 */
