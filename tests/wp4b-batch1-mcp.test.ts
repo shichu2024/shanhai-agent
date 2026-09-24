@@ -286,3 +286,32 @@ describe('WP-4B 批次一 A-13/A-14：external 调用桥', () => {
     await expect(bridge.call('docs-list', {})).rejects.toThrow(/external/);
   });
 });
+
+// ============================================================
+// P1-1 修复回归（决策官裁决选项 A）：stdio spawn 失败 / 意外退出 → 连接级错误
+// 直接 reject 全部 pending（勿伪造 id:null 消息走分发通道）——快速结构化失败，不挂起。
+// 该路径正是挂死逃过 225 条测试的覆盖缺口：测试自身带超时断言防回归。
+// ============================================================
+
+describe('WP-4B 批次一 P1-1 修复回归：连接级错误 reject pending', () => {
+  const HUNG = 'HUNG-5s';
+  const hungGuard = <T>(p: Promise<T>, ms = 5000) =>
+    Promise.race([p.then(() => 'settled', (e: Error) => `rejected:${e.message}`), sleep(ms).then(() => HUNG)]);
+
+  it('真实子进程 ENOENT（不存在的 command）：connect 快速结构化失败，不挂起', async () => {
+    const transport = new StdioMcpTransport('definitely-not-exist-cmd-shanhai-p1', []);
+    const outcome = await hungGuard(McpClient.connect(transport));
+    expect(outcome).not.toBe(HUNG);
+    expect(outcome).toMatch(/^rejected:/);
+    expect(outcome).toContain('spawn');
+  }, 15000);
+
+  it('server 意外退出（未经 close()，如启动即崩溃）：pending 请求被 reject，不挂起', async () => {
+    // spawn 成功但进程立即退出——覆盖 exit 路径的连接级错误
+    const transport = new StdioMcpTransport(process.execPath, ['-e', 'process.exit(3)']);
+    const outcome = await hungGuard(McpClient.connect(transport));
+    expect(outcome).not.toBe(HUNG);
+    expect(outcome).toMatch(/^rejected:/);
+    expect(outcome).toContain('退出');
+  }, 15000);
+});

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { Writable, Readable } from 'node:stream';
+import type { ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 // 第四阶段 §4.2（D-28 退路形态）：MCP stdio client 最小子集——自实现 JSON-RPC over stdio
@@ -37,6 +37,9 @@ export interface McpServerInfo {
 export interface McpTransport {
   send(message: object): void;
   onMessage(handler: (msg: unknown) => void): void;
+  /** P1-1 修复（裁决选项 A）：连接级错误（spawn 失败 / 意外退出）专用通道——client 直接
+   * reject 全部 pending 请求，不伪造 id:null 消息走消息分发。in-proc 夹具无连接级失败场景，可不实现。 */
+  onError?(handler: (err: Error) => void): void;
   close(): Promise<void>;
 }
 
@@ -84,14 +87,24 @@ export function stdioTransportFactory(cfg: McpServerConfig): StdioMcpTransport {
 
 /** 真实子进程 stdio transport（ndjson JSON-RPC；stderr 继承——server 错误不静默） */
 export class StdioMcpTransport implements McpTransport {
-  private child: { stdin: Writable; stdout: Readable; on: (e: string, cb: (arg?: Error) => void) => void; kill: () => void; exitCode: number | null };
+  private child: ChildProcess;
   private listener: ((msg: unknown) => void) | null = null;
+  private errorListener: ((err: Error) => void) | null = null;
   private closed = false;
 
   constructor(command: string, args: string[], env: NodeJS.ProcessEnv = process.env) {
     this.child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'inherit'] });
-    this.child.on('error', (err) => this.listener?.({ jsonrpc: '2.0', id: null, error: { code: -32000, message: `MCP server spawn 失败：${err?.message ?? '未知错误'}` } }));
-    const rl = createInterface({ input: this.child.stdout });
+    // P1-1 修复（裁决选项 A）：spawn 失败（如 ENOENT——command 打错）与意外退出（未经 close()，
+    // 如 server 启动即崩溃/中途死亡）走连接级错误通道 reject client 全部 pending——快速结构化失败，
+    // 不伪造 id:null 消息走分发通道（分发通道忽略无 id 消息 = 错误信号被吞 = 永久挂死）
+    this.child.on('error', (err) =>
+      this.errorListener?.(new Error(`MCP server spawn 失败：${err?.message ?? '未知错误'}`)));
+    this.child.on('exit', (code, signal) => {
+      if (!this.closed) {
+        this.errorListener?.(new Error(`MCP server 意外退出（code=${code ?? 'null'} signal=${signal ?? 'null'}，未经 close()——请求不可达`));
+      }
+    });
+    const rl = createInterface({ input: this.child.stdout! });
     rl.on('line', (line) => {
       const trimmed = line.trim();
       if (trimmed === '' || this.closed) return;
@@ -102,11 +115,15 @@ export class StdioMcpTransport implements McpTransport {
   }
 
   send(message: object): void {
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    this.child.stdin?.write(`${JSON.stringify(message)}\n`);
   }
 
   onMessage(handler: (msg: unknown) => void): void {
     this.listener = handler;
+  }
+
+  onError(handler: (err: Error) => void): void {
+    this.errorListener = handler;
   }
 
   async close(): Promise<void> {
@@ -114,7 +131,7 @@ export class StdioMcpTransport implements McpTransport {
     this.closed = true;
     await new Promise<void>((resolve) => {
       this.child.on('exit', () => resolve());
-      this.child.stdin.end();
+      this.child.stdin?.end();
       const killTimer = setTimeout(() => { if (this.child.exitCode === null) this.child.kill(); }, 3000);
       killTimer.unref();
     });
@@ -179,6 +196,11 @@ export class McpClient {
 
   attach(transport: McpTransport): void {
     this.transport = transport;
+    // P1-1 修复：连接级错误 → reject 全部 pending（快速结构化失败，不静默挂起）
+    transport.onError?.((err) => {
+      for (const [, waiter] of this.pending) waiter.reject(err);
+      this.pending.clear();
+    });
     transport.onMessage((msg) => {
       const resp = msg as { id?: number | string | null; result?: unknown; error?: JsonRpcError };
       if (resp.id === null || resp.id === undefined) return; // 通知/请求（server→client）本期不处理
