@@ -197,10 +197,11 @@ describe('WP-4B 批次一 A-13/A-14：external 调用桥', () => {
     expect(row.status).toBe('succeeded');
     const types = h.rt.trace.readEvents(taskId).map((e) => e.eventType);
     expect(types).toContain('tool_call_executed');
-    // 工具结果确实来自 MCP server（echo 载荷出现在第二轮模型请求的 tool_results 中）
+    // 工具结果确实来自 MCP server（echo 载荷出现在第二轮模型请求的 tool_results 中；
+    // 批次二 D-34 起结果包裹 <tool-result source="mcp:weather"> 边界标记——断言同步更新）
     const second = h.provider.receivedCalls[1];
     const toolResults = (second.messages as unknown as { role: string; results: { content: unknown }[] }[]).find((m) => m.role === 'tool_results')!;
-    expect((toolResults.results[0].content as { content: string }).content).toBe('echo:{"city":"shanghai","days":3}');
+    expect((toolResults.results[0].content as { content: string }).content).toBe('<tool-result source="mcp:weather">echo:{"city":"shanghai","days":3}</tool-result>');
   });
 
   it('A-13 同链同 reasonCode：external 未声明 → not_declared_in_spec；L2 参数越界 → param_out_of_range', async () => {

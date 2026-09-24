@@ -66,7 +66,42 @@ export class Registry {
 
   // ---------- Tool Registry（A2 附录 A） ----------
 
+  /** external 登记前置校验（§4.3-1/§4.3-2，D-27）：L4 永禁 + paramSchema JSON Schema 合法性。
+   *  拒绝 = 结构化（RejectedRequest 审计 + RegistrationError），防坏 schema 入库。 */
+  private validateExternalToolDef(def: ToolRegistration, who: string): void {
+    if (def.kind !== 'external') return;
+    if (def.riskLevel === 'L4') {
+      this.toolReject(def.toolId, who, `external 工具 L4 永久拒绝登记（D-8 外推：写安全域/凭据操作不属于「人工可审」范畴——external 实现不受平台审查，D-27）`);
+    }
+    let schema: unknown;
+    try {
+      schema = JSON.parse(def.paramSchema);
+    } catch {
+      this.toolReject(def.toolId, who, `external 工具 ${def.toolId} paramSchema 不是合法 JSON（登记即校验，防坏 schema 入库，§4.3-2）`);
+    }
+    if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) {
+      this.toolReject(def.toolId, who, `external 工具 ${def.toolId} paramSchema 必须为 JSON 对象（收到 ${Array.isArray(schema) ? '数组' : typeof schema}，§4.3-2）`);
+    }
+    const type = (schema as { type?: unknown }).type;
+    if (type !== undefined && type !== 'object') {
+      this.toolReject(def.toolId, who, `external 工具 ${def.toolId} paramSchema.type=${String(type)}——MCP 工具参数为对象，仅接受 object 型 schema（§4.3-2 登记时前置校验）`);
+    }
+  }
+
+  /** 工具登记结构化拒绝（§4.3：审计留痕 + RegistrationError——外部评级治理拒绝面可审计） */
+  private toolReject(toolId: string, who: string, reason: string): never {
+    this.audit.rejectedRequest({
+      kind: 'tool_registration',
+      who,
+      target: toolId,
+      inputHash: sha256Hex(`${toolId}:${reason}`),
+      rejectReason: JSON.stringify([{ path: '$', message: reason }]),
+    });
+    throw new RegistrationError(reason, [{ path: '$', message: reason }]);
+  }
+
   registerTool(def: ToolRegistration, who: string): void {
+    this.validateExternalToolDef(def, who);
     const existing = this.getTool(def.toolId);
     if (!existing) {
       this.db
@@ -89,22 +124,30 @@ export class Registry {
     // 重登记：等级只能升不能降（防降级洗白——低等级重登记走人工库维护，不在 CLI 语义内）
     const order: RiskLevel[] = ['L0', 'L1', 'L2', 'L3', 'L4'];
     if (order.indexOf(def.riskLevel) < order.indexOf(existing.riskLevel)) {
-      throw new Error(`工具 ${def.toolId} 等级只能升不能降：${existing.riskLevel} → ${def.riskLevel}（A2 附录 A）`);
+      // §4.3-1（批次二，A-18）：结构化拒绝（审计留痕 + RegistrationError）
+      this.toolReject(
+        def.toolId, who,
+        `工具 ${def.toolId} 等级只能升不能降：${existing.riskLevel} → ${def.riskLevel}（A2 附录 A）`,
+      );
     }
+    // P3-1（批次一遗留顺手修复）：重登记不携带元数据（undefined）→ 保留已有溯源，不静默清空
+    const source = def.source ?? existing.source ?? null;
+    const registeredBy = def.registeredBy ?? existing.registeredBy ?? null;
+    const description = def.description ?? existing.description ?? null;
     this.db
       .prepare(
         `UPDATE tool_registry SET name=?, kind=?, riskLevel=?, implVersion=?, paramSchema=?, controlledFieldsSchema=?, status=?, source=?, registeredBy=?, description=? WHERE toolId=?`,
       )
       .run(
         def.name, def.kind, def.riskLevel, def.implVersion, def.paramSchema,
-        def.controlledFieldsSchema ?? null, def.status, def.source ?? null, def.registeredBy ?? null, def.description ?? null, def.toolId,
+        def.controlledFieldsSchema ?? null, def.status, source, registeredBy, description, def.toolId,
       );
     this.audit.versionEvent('tool_reregistered', who, def.toolId, {
       toolId: def.toolId,
       riskLevel: { old: existing.riskLevel, new: def.riskLevel },
       implVersion: { old: existing.implVersion, new: def.implVersion },
-      ...(def.source !== undefined && def.source !== null ? { source: def.source } : {}),
-      ...(def.registeredBy !== undefined && def.registeredBy !== null ? { registeredBy: def.registeredBy } : {}),
+      ...(source !== null ? { source } : {}), // P3-1：审计载荷反映实际持久化值（未携带 → 保留值）
+      ...(registeredBy !== null ? { registeredBy } : {}),
     });
   }
 

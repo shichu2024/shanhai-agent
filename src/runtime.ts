@@ -36,6 +36,8 @@ export interface RuntimeOptions {
   mcpServers?: Record<string, McpServerConfig>;
   /** 测试注入：in-proc transport 工厂（夹具主形态，§14.2-2）；缺省 = stdio 子进程 */
   mcpTransportFactory?: (name: string, cfg: McpServerConfig) => McpTransport;
+  /** 第四阶段批次二（§4.3-4 / F-10-④）：MCP 结果超长截断上限（缺省 20000） */
+  mcpResultMaxChars?: number;
 }
 
 export class Runtime {
@@ -72,7 +74,7 @@ export class Runtime {
     this.toolImpls = createBuiltinImpls(opts.repoRoot, redaction);
     // 第四阶段批次一（§4.2-3 调用桥）：external 工具经同一 ToolExecutor 循环分派至 MCP client
     this.mcpServers = opts.mcpServers ?? {};
-    this.mcpBridge = new McpToolBridge({ db: handles.db, servers: this.mcpServers, transportFactory: opts.mcpTransportFactory });
+    this.mcpBridge = new McpToolBridge({ db: handles.db, servers: this.mcpServers, transportFactory: opts.mcpTransportFactory, resultMaxChars: opts.mcpResultMaxChars });
     this.approvals = new ApprovalManager({
       db: handles.db,
       trace: this.trace,
@@ -108,6 +110,7 @@ export class Runtime {
       redaction: config.redaction,
       evolutionDismissCooldownDays: config.evolution?.dismissCooldownDays,
       mcpServers: config.mcpServers,
+      mcpResultMaxChars: config.mcp?.resultMaxChars,
     });
   }
 

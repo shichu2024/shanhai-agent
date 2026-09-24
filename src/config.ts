@@ -19,6 +19,8 @@ export interface RuntimeConfig {
   evolution?: { dismissCooldownDays?: number }; // dismiss 冷却窗天数；缺省 7
   /** 第四阶段批次一（§4.2）：MCP server 配置段（平台层；首期 stdio，http/sse 字段位预留） */
   mcpServers?: Record<string, import('./mcp/client.js').McpServerConfig>;
+  /** 第四阶段批次二（§4.3-4 / F-10-④）：MCP 结果超长截断上限（字符；缺省 20000） */
+  mcp?: { resultMaxChars?: number };
 }
 
 export class ConfigError extends Error {
@@ -44,6 +46,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     redaction?: { rules?: { ruleId?: string; pattern?: string; scope?: string }[] }; // scope 为已删除装饰字段：该字段被忽略（§4.7-1，条目本身仍被接受）
     evolution?: { dismissCooldownDays?: number };
     mcpServers?: Record<string, { transport?: string; command?: string; args?: string[]; envRefs?: Record<string, string> }>;
+    mcp?: { resultMaxChars?: number };
   };
   const anthropic = raw.providers?.anthropic;
   if (!anthropic?.baseUrl) {
@@ -76,6 +79,10 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
         ? { dismissCooldownDays: raw.evolution.dismissCooldownDays }
         : undefined,
     mcpServers: parseMcpServers(raw.mcpServers),
+    mcp:
+      raw.mcp?.resultMaxChars !== undefined && Number.isFinite(raw.mcp.resultMaxChars) && raw.mcp.resultMaxChars > 0
+        ? { resultMaxChars: Math.floor(raw.mcp.resultMaxChars) }
+        : undefined,
   };
 }
 
