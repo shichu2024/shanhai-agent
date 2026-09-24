@@ -17,6 +17,8 @@ export interface RuntimeConfig {
   redaction: RedactionPolicy; // 管道不可削（空规则集仍过管道）；规则集内容可裁
   /** 批次三（§4.5-4，D-25）：演进治理运行时配置（平台层，不进 Spec） */
   evolution?: { dismissCooldownDays?: number }; // dismiss 冷却窗天数；缺省 7
+  /** 第四阶段批次一（§4.2）：MCP server 配置段（平台层；首期 stdio，http/sse 字段位预留） */
+  mcpServers?: Record<string, import('./mcp/client.js').McpServerConfig>;
 }
 
 export class ConfigError extends Error {
@@ -41,6 +43,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     providers?: Record<string, { baseUrl?: string; authTokenEnv?: string; models?: string[] }>;
     redaction?: { rules?: { ruleId?: string; pattern?: string; scope?: string }[] }; // scope 为已删除装饰字段：该字段被忽略（§4.7-1，条目本身仍被接受）
     evolution?: { dismissCooldownDays?: number };
+    mcpServers?: Record<string, { transport?: string; command?: string; args?: string[]; envRefs?: Record<string, string> }>;
   };
   const anthropic = raw.providers?.anthropic;
   if (!anthropic?.baseUrl) {
@@ -72,7 +75,25 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       raw.evolution.dismissCooldownDays >= 0
         ? { dismissCooldownDays: raw.evolution.dismissCooldownDays }
         : undefined,
+    mcpServers: parseMcpServers(raw.mcpServers),
   };
+}
+
+/** 第四阶段批次一（§4.2）：mcpServers 段解析——transport 限 stdio（http/sse 字段位预留本期拒绝） */
+function parseMcpServers(
+  section: Record<string, { transport?: string; command?: string; args?: string[]; envRefs?: Record<string, string> }> | undefined,
+): Record<string, import('./mcp/client.js').McpServerConfig> | undefined {
+  if (!section || Object.keys(section).length === 0) return undefined;
+  const result: Record<string, import('./mcp/client.js').McpServerConfig> = {};
+  for (const [name, cfg] of Object.entries(section)) {
+    if (name.startsWith('$')) continue; // 模板注释键（config.example.json 惯例）
+    const transport = cfg.transport ?? 'stdio';
+    if (transport !== 'stdio') {
+      throw new ConfigError(`mcpServers.${name}.transport=${transport} 本期仅支持 stdio（http/sse 为字段位预留，§4.2）`);
+    }
+    result[name] = { transport: 'stdio', command: cfg.command, args: cfg.args, envRefs: cfg.envRefs };
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export function buildProviderFromConfig(config: RuntimeConfig): ModelProvider {

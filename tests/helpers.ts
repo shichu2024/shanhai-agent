@@ -17,11 +17,19 @@ export interface Harness {
 export function makeHarness(
   script: MockScript = [],
   repoRoot = process.cwd(),
-  extra: { redaction?: RedactionPolicy; dispatchRoll?: () => number } = {},
+  extra: {
+    redaction?: RedactionPolicy;
+    dispatchRoll?: () => number;
+    mcpServers?: Record<string, import('../src/mcp/client.js').McpServerConfig>;
+    mcpTransportFactory?: (name: string, cfg: import('../src/mcp/client.js').McpServerConfig) => import('../src/mcp/client.js').McpTransport;
+  } = {},
 ): Harness {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'shanhai-test-'));
   const provider = new MockProvider([...script]);
-  const rt = Runtime.withProvider(provider, WHITELIST, dataDir, repoRoot, extra.redaction, extra.dispatchRoll);
+  const rt = Runtime.withProvider(provider, WHITELIST, dataDir, repoRoot, extra.redaction, extra.dispatchRoll, {
+    mcpServers: extra.mcpServers,
+    mcpTransportFactory: extra.mcpTransportFactory,
+  });
   rt.startup('test');
   return { rt, provider, dataDir, repoRoot };
 }

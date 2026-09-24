@@ -235,6 +235,11 @@ function migrate(db: Database.Database): void {
   // 批次三（§4.4-3 / §4.5-4，D-22/D-25）：evolution_candidate 增列——ALTER TABLE 原地支持，零数据回填
   addColumn(db, 'evolution_candidate', 'derivedVersionIds', `TEXT NOT NULL DEFAULT '[]'`); // 候选↔版本关联（--from-candidate 显式回填）
   addColumn(db, 'evolution_candidate', 'dismissedAt', `TEXT`); // dismiss 冷却窗起算点（NULL = 未驳回）
+
+  // 第四阶段批次一（§4.1）：tool_registry 元数据增列 ×3——ADD COLUMN 原地支持，零数据回填
+  addColumn(db, 'tool_registry', 'source', `TEXT`); // builtin / mcp:<serverName>（来源可追溯）
+  addColumn(db, 'tool_registry', 'registeredBy', `TEXT`); // 登记人（external 评级断言的留痕落点——P3-3 辅助留痕，非强证据）
+  addColumn(db, 'tool_registry', 'description', `TEXT`); // 人类可读描述（discovery 时从 MCP server 取得）
 }
 
 /** 幂等 ADD COLUMN（存量库原地升级，零回填） */

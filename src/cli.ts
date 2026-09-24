@@ -9,6 +9,7 @@ import { RegistrationError, REVIEW_ITEMS } from './modules/registry.js';
 import { TaskCreationRejected } from './modules/taskManager.js';
 import { ApprovalError } from './modules/approval.js';
 import { buildAgentReport } from './modules/report.js';
+import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
 
@@ -39,6 +40,11 @@ function usage(): never {
   shanhai approval approve <requestId> [--by <who>] [--detach]     （只写 decision；默认前台 spawn resume）
   shanhai approval deny <requestId> [--by <who>] [--reason <text>]
   shanhai memory list [--agent <agentId>]                           （白泽记忆；顺带惰性全量校正）
+  shanhai tool register --file <def.json> [--by <who>]              （登记/重登记工具；等级只升不降）
+  shanhai tool list [--kind builtin|external] [--risk L0..L4]       （含来源/登记人/状态）
+  shanhai tool show <toolId>
+  shanhai tool retire <toolId> [--by <who>]                         （status=retired；调用点拦截）
+  shanhai tool mcp connect <name> [--yes] [--by <who>]              （MCP 接入：发现→确认清单→批量登记；--yes 全按缺省 L3）
   shanhai evolution list                                            （女娲演进候选；顺带惰性聚合）
   shanhai evolution show <candidateId>
   shanhai evolution confirm <candidateId> [--proposed-change <text>]
@@ -238,6 +244,77 @@ async function main(): Promise<void> {
       } else usage();
       break;
     }
+    case 'tool': {
+      if (sub === 'register') {
+        const file = flagValue(rest, '--file');
+        if (!file || !existsSync(file)) usage();
+        const def = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+        rt.registry.registerTool(
+          {
+            toolId: String(def.toolId),
+            name: String(def.name ?? def.toolId),
+            kind: def.kind === 'external' ? 'external' : 'builtin',
+            riskLevel: def.riskLevel as 'L0' | 'L1' | 'L2' | 'L3' | 'L4',
+            implVersion: String(def.implVersion ?? '0.1.0'),
+            paramSchema: typeof def.paramSchema === 'string' ? def.paramSchema : JSON.stringify(def.paramSchema ?? {}),
+            controlledFieldsSchema: def.controlledFieldsSchema === undefined || def.controlledFieldsSchema === null
+              ? null
+              : (typeof def.controlledFieldsSchema === 'string' ? def.controlledFieldsSchema : JSON.stringify(def.controlledFieldsSchema)),
+            status: def.status === 'retired' ? 'retired' : 'active',
+            ...(def.source !== undefined ? { source: String(def.source) } : {}),
+            ...(def.registeredBy !== undefined ? { registeredBy: String(def.registeredBy) } : {}),
+            ...(def.description !== undefined ? { description: String(def.description) } : {}),
+          },
+          by,
+        );
+        console.log(JSON.stringify({ ok: true, toolId: def.toolId, op: rt.registry.getTool(String(def.toolId)) ? 'reregistered' : 'registered' }, null, 2));
+      } else if (sub === 'list') {
+        const kindFlag = flagValue(rest, '--kind');
+        const riskFlag = flagValue(rest, '--risk');
+        console.log(JSON.stringify(
+          rt.registry.listTools({
+            kind: kindFlag === 'builtin' || kindFlag === 'external' ? kindFlag : undefined,
+            riskLevel: riskFlag && /^L[0-4]$/.test(riskFlag) ? (riskFlag as 'L0') : undefined,
+          }).map(({ toolId, name, kind, riskLevel, status, source, registeredBy, registeredAt }) => ({ toolId, name, kind, riskLevel, status, source: source ?? null, registeredBy: registeredBy ?? null, registeredAt })),
+          null, 2,
+        ));
+      } else if (sub === 'show') {
+        const [toolId] = pos;
+        if (!toolId) usage();
+        const row = rt.registry.getTool(toolId);
+        if (!row) {
+          console.error(JSON.stringify({ ok: false, error: `工具不存在：${toolId}` }));
+          process.exit(1);
+        }
+        console.log(JSON.stringify({ ...row, paramSchema: JSON.parse(row.paramSchema) }, null, 2));
+      } else if (sub === 'retire') {
+        const [toolId] = pos;
+        if (!toolId) usage();
+        rt.registry.retireTool(toolId, by);
+        console.log(JSON.stringify({ ok: true, toolId, status: 'retired' }, null, 2));
+      } else if (sub === 'mcp') {
+        if (pos[0] !== 'connect') usage();
+        const name = pos[1];
+        if (!name) usage();
+        const yes = rest.includes('--yes');
+        const result = await connectMcpServer(
+          { registry: rt.registry, servers: rt.mcpServers, who: by },
+          name,
+          { yes, confirm: yes ? undefined : confirmMcpLevels },
+        );
+        if (result.aborted) {
+          console.error(JSON.stringify({ ok: false, error: '确认清单被中止——不登记（零副作用）' }));
+          process.exit(1);
+        }
+        console.log(JSON.stringify({
+          ok: true, serverName: result.serverName, serverInfo: result.serverInfo,
+          spawnMs: result.spawnMs, listMs: result.listMs,
+          registered: result.registrations.map((r) => ({ toolId: r.toolId, riskLevel: r.riskLevel })),
+          specSnippet: JSON.parse(result.specSnippet),
+        }, null, 2));
+      } else usage();
+      break;
+    }
     case 'memory': {
       if (sub === 'list') {
         // 顺带执行惰性全量校正（§4.4-3-②，与审批超时惰性判定同一模式）
@@ -287,6 +364,31 @@ async function main(): Promise<void> {
     }
     default:
       usage();
+  }
+}
+
+/** MCP connect 确认清单（§4.2-1 manual 档）：逐工具评级确认（回车 = 缺省 L3；n = 中止）；返回 null = 中止 */
+async function confirmMcpLevels(candidates: ToolCandidate[]): Promise<Record<string, 'L0' | 'L1' | 'L2' | 'L3'> | null> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, (a) => resolve(a.trim())));
+  const levels: Record<string, 'L0' | 'L1' | 'L2' | 'L3'> = {};
+  try {
+    console.log(`\n=== MCP 确认清单（server=${candidates[0]?.toolId.split('__')[0] ?? '?'}；缺省勾选 L3；readOnlyHint 仅建议不自动降级）===`);
+    for (const c of candidates) {
+      console.log(`  ${c.toolId}——${c.description || c.name}${c.readOnlyHint ? ' [readOnlyHint→可考虑 L1/L2]' : ''}${Object.keys(c.paramRanges).length > 0 ? ` [受控字段候选 ${JSON.stringify(c.paramRanges)}]` : ''}`);
+    }
+    for (const c of candidates) {
+      const answer = await ask(`工具 ${c.toolId} 评级（回车=L3 / L0-L3 / n 中止）: `);
+      if (answer === 'n') return null;
+      if (answer !== '' && !/^L[0-3]$/.test(answer)) {
+        console.log('仅接受回车（缺省 L3）、L0-L3 或 n（中止）');
+        return null;
+      }
+      levels[c.toolId] = answer === '' ? 'L3' : (answer as 'L0' | 'L1' | 'L2' | 'L3');
+    }
+    return levels;
+  } finally {
+    rl.close();
   }
 }
 

@@ -115,6 +115,8 @@ export interface TaskManagerDeps {
   state: StateManager;
   gateway: ModelGateway;
   toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
+  /** 第四阶段批次一（§4.2-3 调用桥）：external 工具分派（impls Miss 且 kind=external → MCP tools/call） */
+  externalCall?: (toolId: string, args: Record<string, unknown>) => Promise<unknown>;
   audit: AuditRecorder;
   approvals: ApprovalManager;
   /** v1.1（D-13）：持久化记忆（终态计数钩子 + injection=context 注入构建） */
@@ -375,6 +377,7 @@ export class TaskManager {
         input: JSON.parse(row.input),
         getTool: (toolId) => deps.registry.getTool(toolId),
         toolImpls: deps.toolImpls,
+        externalCall: deps.externalCall,
         ledger, strategy,
         isCancelRequested: () => cancelRequested,
         isAbortRequested: () => this.getTask(taskId).abortRequested === 1, // 跨进程 abortRequested 持久化标志（A3 §2）

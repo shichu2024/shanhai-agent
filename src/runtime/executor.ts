@@ -53,6 +53,8 @@ export interface ExecutorContext {
   input: unknown;
   getTool: (toolId: string) => { riskLevel: string; status: string; implVersion: string } | null;
   toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
+  /** 第四阶段批次一（§4.2-3）：external 工具分派（impls Miss 且 kind=external → MCP tools/call） */
+  externalCall?: (toolId: string, args: Record<string, unknown>) => Promise<unknown>;
   ledger: BudgetLedger;
   strategy: 'native' | 'prompt' | null;
   isCancelRequested(): boolean;
@@ -133,6 +135,7 @@ export async function runAgentLoop(ctx: ExecutorContext): Promise<ExecutorSuccee
     base, trace,
     getTool: ctx.getTool,
     impls: ctx.toolImpls,
+    externalCall: ctx.externalCall,
     declared: spec.toolPolicy.tools,
     maxConsecutiveDenials: spec.toolPolicy.maxConsecutiveDenials ?? 2,
     maxAttempts,
