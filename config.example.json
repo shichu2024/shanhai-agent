@@ -27,7 +27,7 @@
     }
   },
   "mcp": {
-    "$comment": "可选段（第四阶段 §4.3-4）：resultMaxChars = MCP 工具结果拼接文本截断上限（字符；缺省 20000，超限截断 + 载荷标注 truncated，预算保护）。",
+    "$comment": "可选段（第四阶段 §4.3-4）：resultMaxChars = MCP 工具结果拼接文本截断上限（字符；缺省 20000，超限截断 + 载荷标注 truncated，预算保护）。非法值（≤0 / 非数字）fail-fast 拒绝启动（批次四 P3-2）。",
     "resultMaxChars": 20000
   }
 }

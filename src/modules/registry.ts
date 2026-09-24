@@ -4,6 +4,7 @@ import { nowNs } from './traceRecorder.js';
 import { AuditRecorder } from './recorders.js';
 import type { RedactionPolicy } from './redaction.js';
 import { validateRegistration, type ValidationDeps } from './specValidator.js';
+import { buildAgentCard } from './agentCard.js';
 import type { RiskLevel, VersionStatus } from '../types.js';
 
 // A1 §5/§7：注册与不可变快照；A5 §1–§2：版本状态机 + 指针；A2 附录 A：Tool Registry（挂靠本模块）
@@ -236,6 +237,20 @@ export class Registry {
   getPointer(agentId: string): string | null {
     const row = this.db.prepare('SELECT currentVersionId FROM agent WHERE agentId = ?').get(agentId) as { currentVersionId: string | null } | undefined;
     return row?.currentVersionId ?? null;
+  }
+
+  /** 批次四（§4.5，D-33）：Agent Card 只读派生——每次从 AgentVersion 快照现算，零存储写入、零审计事件。
+   *  versionId 缺省取当前指针；派生面不设版本状态门（draft 快照同样可导出）。 */
+  agentCard(agentId: string, versionId?: string): import('./agentCard.js').AgentCard {
+    const vid = versionId ?? this.getPointer(agentId);
+    if (!vid) {
+      throw new RegistrationError(`agentCard：${agentId} 无当前指针版本（card 导出需显式 versionId 或已 release 移指针）`, []);
+    }
+    const row = this.getVersion(vid);
+    if (!row || row.agentId !== agentId) {
+      throw new RegistrationError(`agentCard：版本 ${vid} 不存在或不属于 agent ${agentId}`, []);
+    }
+    return buildAgentCard(row);
   }
 
   private setPointer(agentId: string, versionId: string): void {
