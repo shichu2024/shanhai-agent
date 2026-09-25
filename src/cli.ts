@@ -10,6 +10,7 @@ import { TaskCreationRejected } from './modules/taskManager.js';
 import { ApprovalError } from './modules/approval.js';
 import { buildAgentReport } from './modules/report.js';
 import { EvidenceRefError } from './modules/evidenceStore.js';
+import { CapabilityError, CAPABILITY_KINDS } from './modules/capabilityRegistry.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
@@ -53,6 +54,13 @@ function usage(): never {
   shanhai evolution dismiss <candidateId>
   shanhai evidence show <ref>                                        （证据单条解析；ref=<kind>:<id>，封闭枚举 task/trace_event/failure/memory/eval 预留位）
   shanhai evidence task <taskId>                                     （任务全链证据链：trace 对账 + failure/memory 关联 + 委托父子链；只读派生）
+  shanhai capability list [--agent <id>] [--kind capability|limitation] [--status candidate|active|retired]
+                                                                     （能力/限制断言清单；顺带 derived 惰性重算）
+  shanhai capability add <agentId> --kind <capability|limitation> --statement <text|--statement-file <path>>
+                                       [--evidence <ref,...>] [--by <who>]
+                                                                     （登记 candidate；无证据=evidencePending 草稿，假证据整单拒）
+  shanhai capability confirm <capabilityId> [--by <who>]             （candidate→active；强制证据 ≥1 且全可解析）
+  shanhai capability retire <capabilityId> [--by <who>]              （→retired 无出边；candidate 退场即 dismiss 留痕）
   shanhai query t1 <taskId>
   shanhai query t2 <versionId>
   shanhai query t2p <versionId>                                    （T2′ 审批可举证）
@@ -386,6 +394,59 @@ async function main(): Promise<void> {
       } else usage();
       break;
     }
+    case 'capability': {
+      // 第五阶段批次二（§4.2，D-37/D-38）：Capability/Limitation Registry——结构化断言 + 人工确认制
+      if (sub === 'list') {
+        const kindFlag = flagValue(rest, '--kind');
+        const statusFlag = flagValue(rest, '--status');
+        const rows = rt.capabilities.list({
+          agent: flagValue(rest, '--agent') ?? undefined,
+          kind: (CAPABILITY_KINDS as readonly string[]).includes(kindFlag ?? '') ? (kindFlag as 'capability') : undefined,
+          status: ['candidate', 'active', 'retired'].includes(statusFlag ?? '') ? (statusFlag as 'candidate') : undefined,
+        });
+        console.log(JSON.stringify(rows.map((r) => ({
+          capabilityId: r.capabilityId,
+          agentId: r.agentId,
+          kind: r.kind,
+          origin: r.origin,
+          statement: r.statement,
+          statementDigest: r.statementDigest,
+          status: r.status,
+          evidenceRefs: JSON.parse(r.evidenceRefs),
+          evidencePending: (JSON.parse(r.evidenceRefs) as unknown[]).length === 0,
+          createdAt: r.createdAt,
+          decidedAt: r.decidedAt,
+          decidedBy: r.decidedBy,
+        })), null, 2));
+      } else if (sub === 'add') {
+        const [agentId] = pos;
+        const kind = flagValue(rest, '--kind');
+        const statementFile = flagValue(rest, '--statement-file');
+        const statementText = statementFile ? readFileSync(statementFile, 'utf8') : flagValue(rest, '--statement');
+        if (!agentId || !kind || statementText === null || statementText === undefined) usage();
+        const evidenceFlag = flagValue(rest, '--evidence');
+        const row = rt.capabilities.add({
+          agentId, kind, statement: statementText,
+          evidence: evidenceFlag ? evidenceFlag.split(',').map((s) => s.trim()).filter((s) => s.length > 0) : [],
+          by,
+        });
+        console.log(JSON.stringify({
+          ok: true, capabilityId: row.capabilityId, status: row.status,
+          evidencePending: (JSON.parse(row.evidenceRefs) as unknown[]).length === 0,
+        }, null, 2));
+      } else if (sub === 'confirm') {
+        const [capabilityId] = pos;
+        if (!capabilityId) usage();
+        const row = rt.capabilities.confirm(capabilityId, by);
+        console.log(JSON.stringify({ ok: true, capabilityId: row.capabilityId, status: row.status, decidedAt: row.decidedAt, decidedBy: row.decidedBy }, null, 2));
+      } else if (sub === 'retire') {
+        const [capabilityId] = pos;
+        if (!capabilityId) usage();
+        const row = rt.capabilities.retire(capabilityId, by);
+        console.log(JSON.stringify({ ok: true, capabilityId: row.capabilityId, status: row.status, decidedAt: row.decidedAt, decidedBy: row.decidedBy }, null, 2));
+      } else usage();
+      break;
+    }
     case 'query': {
       if (sub === 't1') {
         const [taskId] = pos;
@@ -477,6 +538,8 @@ main().catch((err) => {
     console.error(JSON.stringify({ ok: false, error: err.message, issues: err.issues }, null, 2));
   } else if (err instanceof ApprovalError) {
     console.error(JSON.stringify({ ok: false, error: err.message, code: err.code, detail: err.detail ?? null }, null, 2));
+  } else if (err instanceof CapabilityError) {
+    console.error(JSON.stringify({ ok: false, error: err.message, code: err.code, detail: err.detail }, null, 2));
   } else {
     console.error(JSON.stringify({ ok: false, error: (err as Error).message ?? String(err) }, null, 2));
   }

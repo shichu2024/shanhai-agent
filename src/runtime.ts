@@ -10,6 +10,7 @@ import { ApprovalManager } from './modules/approval.js';
 import { MemoryManager } from './modules/memory.js';
 import { EvolutionManager } from './modules/evolution.js';
 import { EvidenceStore } from './modules/evidenceStore.js';
+import { CapabilityManager } from './modules/capabilityRegistry.js';
 import { BUILTIN_TOOL_DEFS, BUILTIN_TOOL_VERSION, createBuiltinImpls } from './tools/builtin.js';
 import { Delegation } from './runtime/delegation.js';
 import { McpToolBridge } from './mcp/bridge.js';
@@ -56,6 +57,8 @@ export class Runtime {
   readonly evolutions: EvolutionManager;
   /** 第五阶段批次一（§4.1，D-35）：Evidence Store 只读派生存取层（零写入） */
   readonly evidence: EvidenceStore;
+  /** 第五阶段批次二（§4.2，D-37/D-38）：Capability/Limitation Registry */
+  readonly capabilities: CapabilityManager;
   readonly toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
   /** 第四阶段批次三（§4.4）：鲲鹏委托原语（task-delegate impl + 治理预检） */
   readonly delegation: Delegation;
@@ -75,6 +78,13 @@ export class Runtime {
     // failure+audit 明细）全部入库前过同一 redaction 实例——与 Trace/记忆共用（§9.1-3 双写一致性）。
     this.failures = new FailureRecorder(handles.db, redaction);
     this.audit = new AuditRecorder(handles.db, redaction);
+    // 第五阶段批次二（§4.2，D-37/D-38）：Capability Registry——依赖 audit（此处已构造）与批次一 evidence
+    this.capabilities = new CapabilityManager({
+      db: handles.db,
+      trace: this.trace,
+      evidence: this.evidence,
+      audit: this.audit,
+    });
     this.registry = new Registry(handles.db, redaction);
     this.state = new StateManager(handles.db, this.trace, this.failures);
     this.gateway = new ModelGateway(opts.provider, opts.whitelist);

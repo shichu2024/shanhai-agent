@@ -241,6 +241,30 @@ function migrate(db: Database.Database): void {
   addColumn(db, 'tool_registry', 'registeredBy', `TEXT`); // 登记人（external 评级断言的留痕落点——P3-3 辅助留痕，非强证据）
   addColumn(db, 'tool_registry', 'description', `TEXT`); // 人类可读描述（discovery 时从 MCP server 取得）
 
+  // 第五阶段批次二（§4.2，D-37/D-38）：capability_registry 唯一新表——零 ADD COLUMN、零回填。
+  // 部分唯一索引（V0.2 P1-2）：retired 行不阻挡人工重加同义断言（retired = 本条断言已退场，
+  // 同义新断言按新行登记）；「derived 不复活 retired 行」由重算逻辑的跨全状态同义查询保证，
+  // 索引本身只拦非 retired 新 INSERT，不承担该语义（批次一验收沉淀：勿把两层混为一谈）。
+  db.exec(`
+  CREATE TABLE IF NOT EXISTS capability_registry (
+    capabilityId     TEXT PRIMARY KEY,
+    agentId          TEXT NOT NULL,
+    kind             TEXT NOT NULL CHECK (kind IN ('capability','limitation')),
+    statement        TEXT NOT NULL,
+    origin           TEXT NOT NULL CHECK (origin IN ('derived','manual')),
+    evidenceRefs     TEXT NOT NULL,
+    statementDigest  TEXT NOT NULL,
+    status           TEXT NOT NULL CHECK (status IN ('candidate','active','retired')),
+    createdAt        TEXT NOT NULL,
+    lastUpdatedAt    TEXT NOT NULL,
+    decidedAt        TEXT,
+    decidedBy        TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_capability_agent ON capability_registry(agentId, status);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_capability_dedup
+    ON capability_registry(agentId, kind, statementDigest) WHERE status != 'retired';
+  `);
+
   // 第四阶段批次三（§4.4）：task_record 委托治理增列 ×2——ADD COLUMN 原地支持，零数据回填。
   // A3 注记（规格-实现漂移登记）：parentTaskId 在 A3 §4 早有规格行，但 db.ts 迁移从未落地——
   // 属规格-实现存量漂移（WP-4A 审查 P2-1 确认），本批落地补迁移并在 docs/phase4/03 注记登记；

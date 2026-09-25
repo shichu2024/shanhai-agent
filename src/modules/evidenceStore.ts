@@ -95,7 +95,7 @@ export interface TaskEvidenceChain {
   };
   failures: { recordId: string; subClass: string; occurredAt: string }[];
   memories: { memoryId: string; status: string; createdAt: string }[];
-  /** 委托树（单查询沿树回放）：ancestors = 沿 parentTaskId 上溯（近→远）；descendants = 子树前序 */
+  /** 委托树（单查询沿树回放）：ancestors = 沿 parentTaskId 上溯（近→远）；descendants = 子树层序展开（BFS） */
   delegationChain: {
     ancestors: { taskId: string; agentId: string; delegationDepth: number }[];
     descendants: { taskId: string; agentId: string; delegationDepth: number; status: string }[];
@@ -277,7 +277,7 @@ export class EvidenceStore {
     return ancestors;
   }
 
-  /** 子树前序展开（单查询沿树：逐层按 parentTaskId 取层） */
+  /** 子树层序展开（BFS：逐层按 parentTaskId 取层，单查询沿树） */
   private descendantsOf(taskId: string): { taskId: string; agentId: string; delegationDepth: number; status: string }[] {
     const stmt = this.deps.db.prepare('SELECT taskId, agentId, delegationDepth, status FROM task_record WHERE parentTaskId = ? ORDER BY createdAt');
     const out: { taskId: string; agentId: string; delegationDepth: number; status: string }[] = [];

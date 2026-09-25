@@ -116,6 +116,8 @@ export type AuditEventType =
   | 'version_promoted' // v1.1（A5 §4a，D-12）：canary→current 晋升（决定权留人）
   | 'tool_registered'
   | 'tool_reregistered'
+  | 'capability_registered' // 第五阶段批次二（§4.2，D-38）：断言登记（manual/derived；载荷含 origin）
+  | 'capability_decided' // §4.2：状态机裁决（载荷 decision=confirm/retire/dismiss）
   | 'rejected_request';
 
 export interface FailureRecord {
