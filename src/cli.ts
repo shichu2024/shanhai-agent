@@ -9,6 +9,7 @@ import { RegistrationError, REVIEW_ITEMS } from './modules/registry.js';
 import { TaskCreationRejected } from './modules/taskManager.js';
 import { ApprovalError } from './modules/approval.js';
 import { buildAgentReport } from './modules/report.js';
+import { EvidenceRefError } from './modules/evidenceStore.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
@@ -50,6 +51,8 @@ function usage(): never {
   shanhai evolution show <candidateId>
   shanhai evolution confirm <candidateId> [--proposed-change <text>]
   shanhai evolution dismiss <candidateId>
+  shanhai evidence show <ref>                                        （证据单条解析；ref=<kind>:<id>，封闭枚举 task/trace_event/failure/memory/eval 预留位）
+  shanhai evidence task <taskId>                                     （任务全链证据链：trace 对账 + failure/memory 关联 + 委托父子链；只读派生）
   shanhai query t1 <taskId>
   shanhai query t2 <versionId>
   shanhai query t2p <versionId>                                    （T2′ 审批可举证）
@@ -349,6 +352,37 @@ async function main(): Promise<void> {
         if (!candidateId) usage();
         const row = rt.evolutions.dismiss(candidateId, by);
         console.log(JSON.stringify({ ok: true, candidateId: row.candidateId, status: row.status }, null, 2));
+      } else usage();
+      break;
+    }
+    case 'evidence': {
+      // 第五阶段批次一（§4.1，D-35）：Evidence Store 只读派生存取层——零写入；结构化错误不静默
+      if (sub === 'show') {
+        const [ref] = pos;
+        if (!ref) usage();
+        try {
+          const result = rt.evidence.show(ref);
+          if (!result.ok) {
+            console.error(JSON.stringify({ ok: false, code: result.code, ref: result.ref, error: result.message }, null, 2));
+            process.exit(1);
+          }
+          console.log(JSON.stringify(result, null, 2));
+        } catch (err) {
+          if (err instanceof EvidenceRefError) {
+            console.error(JSON.stringify({ ok: false, code: err.code, ref: err.ref, error: err.message }, null, 2));
+            process.exit(1);
+          }
+          throw err;
+        }
+      } else if (sub === 'task') {
+        const [taskId] = pos;
+        if (!taskId) usage();
+        const result = rt.evidence.taskEvidence(taskId);
+        if (!result.ok) {
+          console.error(JSON.stringify({ ok: false, code: result.code, ref: result.ref, error: result.message }, null, 2));
+          process.exit(1);
+        }
+        console.log(JSON.stringify(result, null, 2));
       } else usage();
       break;
     }
