@@ -11,6 +11,8 @@ import { ApprovalError } from './modules/approval.js';
 import { buildAgentReport } from './modules/report.js';
 import { EvidenceRefError } from './modules/evidenceStore.js';
 import { CapabilityError, CAPABILITY_KINDS } from './modules/capabilityRegistry.js';
+import { buildCapabilityTrend, TREND_BUCKET_UNITS, TrendError } from './modules/trend.js';
+import { buildAgentInsight } from './modules/insight.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
@@ -34,6 +36,8 @@ function usage(): never {
   shanhai agent list <agentId>
   shanhai agent show <agentId> [<versionId>]
   shanhai agent card <agentId> [versionId]                            （Agent Card 只读派生导出；缺省当前指针版本，永不存储）
+  shanhai agent insight <agentId> [versionId] [--since <RFC3339>] [--json]
+                                                                     （自我认知报告：声明/断言/行为/限制四层拼合；只读制品永不存储）
   shanhai task create <agentId> <input.json> [--by <who>] [--draft|--reviewed]
   shanhai task run <taskId> [--strategy native|prompt] [--resume] [--resumed-by approve-spawn|manual-resume]
   shanhai task cancel <taskId> [--by <who>] [--force]              （--force = abort 立即中止/跨进程登记）
@@ -61,6 +65,8 @@ function usage(): never {
                                                                      （登记 candidate；无证据=evidencePending 草稿，假证据整单拒）
   shanhai capability confirm <capabilityId> [--by <who>]             （candidate→active；强制证据 ≥1 且全可解析）
   shanhai capability retire <capabilityId> [--by <who>]              （→retired 无出边；candidate 退场即 dismiss 留痕）
+  shanhai capability trend <agentId> [--since <RFC3339>] [--until <RFC3339>] [--bucket day|week]
+                                                                     （能力趋势：时间桶只读现算；任务/失败面分母与 report 同落盘谓词）
   shanhai query t1 <taskId>
   shanhai query t2 <versionId>
   shanhai query t2p <versionId>                                    （T2′ 审批可举证）
@@ -169,6 +175,30 @@ async function main(): Promise<void> {
         const [agentId, maybeVersion] = pos;
         if (!agentId) usage();
         console.log(JSON.stringify(rt.registry.agentCard(agentId, maybeVersion), null, 2));
+      } else if (sub === 'insight') {
+        // 第五阶段批次三（§4.4，D-40/D-41）：自我认知报告——四层拼合只读制品，永不存储。
+        // 缺省人类可读摘要；--json 导出完整结构（归档是人动作，非系统行为）。
+        const [agentId, maybeVersion] = pos;
+        if (!agentId) usage();
+        const insight = buildAgentInsight(
+          { db: (rt as unknown as { db: import('better-sqlite3').Database }).db, trace: rt.trace, registry: rt.registry, capabilities: rt.capabilities },
+          agentId,
+          { versionId: maybeVersion, since: flagValue(rest, '--since') ?? undefined },
+        );
+        if (rest.includes('--json')) {
+          console.log(JSON.stringify(insight, null, 2));
+        } else {
+          const last = insight.behavior.buckets[insight.behavior.buckets.length - 1];
+          console.log(`=== 自我认知报告 ${insight.agentId} @ ${insight.versionId}（生成于 ${insight.generatedAt}；只读现算，永不存储）===`);
+          const declared = insight.declared;
+          console.log(`[声明面] mission=${JSON.stringify((declared.mission as { responsibilities?: string[] }).responsibilities ?? [])} nonGoals=${JSON.stringify(declared.nonGoals ?? [])} tools=${(declared.tools as unknown[]).length} 项（specVersion=${String(declared.specVersion)} contentHash=${String(declared.contentHash).slice(0, 12)}…）`);
+          console.log(`[断言面] active: capability ${insight.assertions.active.counts.capability} / limitation ${insight.assertions.active.counts.limitation}；open candidates ${insight.assertions.openCandidates.total}（evidencePending ${insight.assertions.openCandidates.evidencePending}）${insight.assertions.emptyHint ? `——${insight.assertions.emptyHint}` : ''}`);
+          for (const e of insight.assertions.active.entries) {
+            console.log(`  · [${e.kind}/${e.origin}] ${e.statement}（证据 ${e.evidenceCount} 条）`);
+          }
+          console.log(`[行为面] 缺省近 ${30} 天窗（since=${insight.behavior.since}，day 桶）：${insight.behavior.status === 'insufficient-sample' ? insight.behavior.insufficientNote : `${insight.behavior.buckets.length} 桶，最新桶 ${last ? last.key : '-'}：任务 ${last ? last.tasks.total : 0} / 通过率 ${last && last.tasks.contractPassRate !== null ? last.tasks.contractPassRate.toFixed(3) : 'null（无分母不假装）'}`}`);
+          console.log(`[限制与证据摘要] limitation 条目 ${insight.limitations.entries.length}；各面证据引用计数 ${JSON.stringify(insight.limitations.evidenceSummary)}（不展开 payload）`);
+        }
       } else usage();
       break;
     }
@@ -444,6 +474,22 @@ async function main(): Promise<void> {
         if (!capabilityId) usage();
         const row = rt.capabilities.retire(capabilityId, by);
         console.log(JSON.stringify({ ok: true, capabilityId: row.capabilityId, status: row.status, decidedAt: row.decidedAt, decidedBy: row.decidedBy }, null, 2));
+      } else if (sub === 'trend') {
+        // 第五阶段批次三（§4.3，D-39）：能力趋势——纯只读时间桶现算（零存储零迁移）
+        const [agentId] = pos;
+        if (!agentId) usage();
+        const bucketFlag = flagValue(rest, '--bucket');
+        const trend = buildCapabilityTrend(
+          (rt as unknown as { db: import('better-sqlite3').Database }).db,
+          rt.trace,
+          agentId,
+          {
+            since: flagValue(rest, '--since') ?? undefined,
+            until: flagValue(rest, '--until') ?? undefined,
+            bucket: (TREND_BUCKET_UNITS as readonly string[]).includes(bucketFlag ?? '') ? (bucketFlag as 'day' | 'week') : undefined,
+          },
+        );
+        console.log(JSON.stringify(trend, null, 2));
       } else usage();
       break;
     }
@@ -539,6 +585,8 @@ main().catch((err) => {
   } else if (err instanceof ApprovalError) {
     console.error(JSON.stringify({ ok: false, error: err.message, code: err.code, detail: err.detail ?? null }, null, 2));
   } else if (err instanceof CapabilityError) {
+    console.error(JSON.stringify({ ok: false, error: err.message, code: err.code, detail: err.detail }, null, 2));
+  } else if (err instanceof TrendError) {
     console.error(JSON.stringify({ ok: false, error: err.message, code: err.code, detail: err.detail }, null, 2));
   } else {
     console.error(JSON.stringify({ ok: false, error: (err as Error).message ?? String(err) }, null, 2));
