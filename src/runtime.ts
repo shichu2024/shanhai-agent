@@ -9,6 +9,7 @@ import { TaskManager } from './modules/taskManager.js';
 import { ApprovalManager } from './modules/approval.js';
 import { MemoryManager } from './modules/memory.js';
 import { EvolutionManager } from './modules/evolution.js';
+import { EvidenceStore } from './modules/evidenceStore.js';
 import { BUILTIN_TOOL_DEFS, BUILTIN_TOOL_VERSION, createBuiltinImpls } from './tools/builtin.js';
 import { Delegation } from './runtime/delegation.js';
 import { McpToolBridge } from './mcp/bridge.js';
@@ -53,6 +54,8 @@ export class Runtime {
   readonly approvals: ApprovalManager;
   readonly memories: MemoryManager;
   readonly evolutions: EvolutionManager;
+  /** 第五阶段批次一（§4.1，D-35）：Evidence Store 只读派生存取层（零写入） */
+  readonly evidence: EvidenceStore;
   readonly toolImpls: Map<string, (args: Record<string, unknown>) => Promise<unknown> | unknown>;
   /** 第四阶段批次三（§4.4）：鲲鹏委托原语（task-delegate impl + 治理预检） */
   readonly delegation: Delegation;
@@ -67,6 +70,7 @@ export class Runtime {
     this.trace = new TraceRecorder(handles.db, handles.tracesDir, redaction);
     this.memories = new MemoryManager({ db: handles.db, trace: this.trace, redaction }); // 同一 redactionPolicy（前置不可削依赖）
     this.evolutions = new EvolutionManager({ db: handles.db, dismissCooldownDays: opts.evolutionDismissCooldownDays });
+    this.evidence = new EvidenceStore({ db: handles.db, trace: this.trace });
     // 批次二（§4.2 DB 侧脱敏）：四落盘面（task_record.input / pause_snapshot.contextJson / notes.md /
     // failure+audit 明细）全部入库前过同一 redaction 实例——与 Trace/记忆共用（§9.1-3 双写一致性）。
     this.failures = new FailureRecorder(handles.db, redaction);
