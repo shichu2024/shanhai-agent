@@ -21,6 +21,8 @@ export interface RuntimeConfig {
   mcpServers?: Record<string, import('./mcp/client.js').McpServerConfig>;
   /** 第四阶段批次二（§4.3-4 / F-10-④）：MCP 结果超长截断上限（字符；缺省 20000） */
   mcp?: { resultMaxChars?: number };
+  /** 第六阶段批次一（§4.1 / D-49）：山海门户可选节——缺省禁用（不启动、不影响任何既有行为）；非法值 fail-fast */
+  portal?: { host?: string; port?: number; operatorId?: string; token?: string };
 }
 
 export class ConfigError extends Error {
@@ -47,6 +49,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     evolution?: { dismissCooldownDays?: number };
     mcpServers?: Record<string, { transport?: string; command?: string; args?: string[]; envRefs?: Record<string, string> }>;
     mcp?: { resultMaxChars?: number };
+    portal?: { host?: string; port?: number; operatorId?: string; token?: string };
   };
   const anthropic = raw.providers?.anthropic;
   if (!anthropic?.baseUrl) {
@@ -80,6 +83,36 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
         : undefined,
     mcpServers: parseMcpServers(raw.mcpServers),
     mcp: parseMcpSection(raw.mcp),
+    portal: parsePortalSection(raw.portal),
+  };
+}
+
+/** 第六阶段批次一（§4.1 / D-49）：portal 节解析——可选节缺省禁用；非法值 fail-fast（对齐 parseMcpSection 先例）；
+ *  零迁移（纯运行时配置，无数据面变更）。 */
+function parsePortalSection(
+  section: { host?: string; port?: number; operatorId?: string; token?: string } | undefined,
+): { host?: string; port?: number; operatorId?: string; token?: string } | undefined {
+  if (!section || Object.keys(section).length === 0) return undefined;
+  if (section.port !== undefined) {
+    const v = section.port;
+    if (typeof v !== 'number' || !Number.isFinite(v) || !Number.isInteger(v) || v < 1 || v > 65535) {
+      throw new ConfigError(
+        `配置非法：portal.port 必须为 1-65535 的整数（收到：${typeof v === 'number' ? String(v) : typeof v}）——fail-fast 拒绝启动（D-49）`,
+      );
+    }
+  }
+  for (const key of ['host', 'operatorId', 'token'] as const) {
+    const v = section[key];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || v.length === 0) {
+      throw new ConfigError(`配置非法：portal.${key} 必须为非空字符串（收到类型：${typeof v}）——fail-fast 拒绝启动（D-49）`);
+    }
+  }
+  return {
+    ...(section.host !== undefined ? { host: section.host } : {}),
+    ...(section.port !== undefined ? { port: section.port } : {}),
+    ...(section.operatorId !== undefined ? { operatorId: section.operatorId } : {}),
+    ...(section.token !== undefined ? { token: section.token } : {}),
   };
 }
 

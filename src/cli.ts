@@ -14,6 +14,8 @@ import { CapabilityError, CAPABILITY_KINDS } from './modules/capabilityRegistry.
 import { buildCapabilityTrend, TREND_BUCKET_UNITS, TrendError } from './modules/trend.js';
 import { buildAgentInsight } from './modules/insight.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
+import { loadRuntimeConfig } from './config.js';
+import { bootPortal, startPortalServer, parsePortalArgs } from './portal/server.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
 
@@ -70,14 +72,49 @@ function usage(): never {
   shanhai query t1 <taskId>
   shanhai query t2 <versionId>
   shanhai query t2p <versionId>                                    （T2′ 审批可举证）
+  shanhai portal [--port N] [--host H]                             （山海门户：常驻本机操作台；缺省 127.0.0.1:7780）
 
 环境：SHANHAI_DATA_DIR（数据目录，默认 <repo>/data）；SHANHAI_CONFIG / config_local.json + 密钥环境变量（T3）`);
   process.exit(1);
 }
 
+/** 第六阶段批次一（§4.1 / §5.1 / D-42 / D-44）：shanhai portal——构造 Runtime + 条件化 startup + 常驻 server */
+async function runPortal(rest: string[]): Promise<void> {
+  const flags = parsePortalArgs(rest);
+  const config = loadRuntimeConfig();
+  const rt = Runtime.fromConfig(dataDir, repoRoot);
+  const boot = bootPortal(rt); // D-42：Running>0 跳过 recover 并警示（bootPortal 内已打警示日志）
+  const handle = await startPortalServer(rt, {
+    dataDir,
+    repoRoot,
+    host: flags.host ?? config.portal?.host,
+    port: flags.port ?? config.portal?.port,
+    token: config.portal?.token,
+  });
+  console.log(`[portal] 山海门户已启动：http://${handle.host}:${handle.port}/ （boot=${boot.skippedStartup ? '跳过崩溃恢复扫描（检测到 Running 任务）' : 'startup 完成'}）`);
+  if (handle.tokenGenerated) {
+    console.log(`[portal] 首次启动已自动生成门户 Token：${handle.token}`);
+    console.log(`[portal] Token 已落 ${handle.tokenFile}（权限 0600；非 POSIX 平台权限位不适用）——API 请求需携带 Authorization: Bearer <token>`);
+  }
+  const shutdown = (): void => {
+    console.log('[portal] 收到退出信号，关闭中……');
+    void (async () => {
+      try {
+        await handle.close();
+      } finally {
+        rt.close(); // SIGINT/SIGTERM → rt.close()（§5.1 步骤 4）
+        process.exit(0);
+      }
+    })();
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
 async function main(): Promise<void> {
   const [cmd, sub, ...rest] = process.argv.slice(2);
   if (!cmd) usage();
+  if (cmd === 'portal') return runPortal(process.argv.slice(3)); // sub 变体会吞掉首个旗标，这里取完整参数段
   const rt = Runtime.fromConfig(dataDir, repoRoot);
   rt.startup('cli');
   const by = flagValue(rest, '--by') ?? 'cli';
