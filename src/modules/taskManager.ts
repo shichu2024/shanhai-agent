@@ -653,6 +653,34 @@ export class TaskManager {
   }
 
   /**
+   * 第六阶段批次一（§4.2 / D-48）：门户读面增量只读方法——冻结守卫：
+   * 只读 SELECT（无写副作用、零 Trace/Audit 事件）、不改任何既有方法签名。
+   * 分页语义：createdAt 倒序（同秒并列按 rowid 倒序），total 恒为过滤后全量计数（不随分页缩放）。
+   */
+  listTasks(opts: { status?: TaskStatus; agentId?: string; limit?: number; offset?: number } = {}): { tasks: TaskRow[]; total: number } {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (opts.status !== undefined) {
+      where.push('status = ?');
+      params.push(opts.status);
+    }
+    if (opts.agentId !== undefined) {
+      where.push('agentId = ?');
+      params.push(opts.agentId);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const total = (
+      this.deps.db.prepare(`SELECT COUNT(*) AS c FROM task_record ${whereSql}`).get(...params) as { c: number }
+    ).c;
+    const limit = opts.limit ?? 100;
+    const offset = opts.offset ?? 0;
+    const tasks = this.deps.db
+      .prepare(`SELECT * FROM task_record ${whereSql} ORDER BY createdAt DESC, rowid DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset) as TaskRow[];
+    return { tasks, total };
+  }
+
+  /**
    * 取消（A3 §2 两级语义）：
    * graceful——Queued 立即；Running 挂起标志等原子调用完成；Paused 立即（无在飞原子调用，P2-6）；
    * abort（--force）——本进程：立即放弃在飞原子调用；跨进程：写 abortRequested 持久化标志（执行进程下一原子调用边界生效）。

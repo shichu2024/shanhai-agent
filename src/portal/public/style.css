@@ -1,0 +1,26 @@
+/* 山海门户骨架样式（批次 6-1）：原生最小可用，不做美化（削减顺序第 1 级不触发） */
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 14px; }
+header { display: flex; align-items: center; gap: 16px; padding: 8px 16px; border-bottom: 1px solid #8884; flex-wrap: wrap; }
+header h1 { font-size: 18px; margin: 0; }
+nav a { margin-right: 12px; text-decoration: none; color: inherit; padding: 4px 8px; border-radius: 4px; }
+nav a.active { background: #8883; font-weight: 600; }
+#token-form { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+#token-input { width: 220px; }
+main { padding: 16px; max-width: 1100px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #8884; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #8882; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+dt { font-weight: 600; }
+dd { margin: 0; word-break: break-all; }
+pre { background: #8881; padding: 8px; overflow: auto; max-height: 360px; }
+details { margin: 8px 0; }
+.error { color: #c0392b; font-weight: 600; }
+.warning { border: 1px solid #b58900; background: #b5890022; padding: 8px; border-radius: 4px; }
+.hint { color: #888; }
+.status-running { font-weight: 700; }
+.status-paused { color: #b58900; font-weight: 600; }
+.status-succeeded { color: #2c8; }
+.status-failed, .status-cancelled { color: #c0392b; }
