@@ -3,6 +3,7 @@ import path from 'node:path';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { Runtime } from '../runtime.js';
 import type { RecoveryReport } from '../modules/stateManager.js';
+import { ConfigError } from '../config.js';
 import { resolvePortalToken, bearerTokenOf, tokenMatches, hostAllowed } from './auth.js';
 import { handleApiGet, sendJson, sendApiError } from './api.js';
 
@@ -58,6 +59,21 @@ export function bootPortal(rt: Runtime, who = 'portal'): BootReport {
     return { skippedStartup: true, runningCount };
   }
   return { skippedStartup: false, runningCount, report: rt.startup(who) };
+}
+
+/**
+ * 环境变量端口解析（P3-②，批次一验收随批修复）：SHANHAI_PORTAL_PORT 非数字/非整数/越界
+ * fail-fast（ConfigError 拒启动）——对齐 D-49 对 config.port 的严格口径（NaN/非整数/越界不静默回退缺省）。
+ * 未设置或空串视为未设置（走 config/缺省 7780）。
+ */
+export function envPortalPort(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env.SHANHAI_PORTAL_PORT;
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new ConfigError(`SHANHAI_PORTAL_PORT 必须为 1-65535 的整数（收到：${raw}）`);
+  }
+  return n;
 }
 
 /** CLI 旗标解析：shanhai portal [--port N] [--host H]；非法值 fail-fast */
@@ -133,7 +149,7 @@ function serveStatic(repoRoot: string, pathname: string, res: http.ServerRespons
 /** 启动门户服务器（auth/静态/路由全链装配；port=0 时由内核分配临时端口，句柄回传实际端口） */
 export async function startPortalServer(rt: Runtime, opts: PortalServerOptions): Promise<PortalHandle> {
   const host = opts.host ?? '127.0.0.1';
-  const port = opts.port ?? (process.env.SHANHAI_PORTAL_PORT ? Number(process.env.SHANHAI_PORTAL_PORT) : undefined) ?? 7780;
+  const port = opts.port ?? envPortalPort() ?? 7780;
   const resolvedToken = resolvePortalToken(opts.dataDir, opts.token, process.env.SHANHAI_PORTAL_TOKEN);
 
   const server = http.createServer((req, res) => {

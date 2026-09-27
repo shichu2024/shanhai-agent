@@ -1,11 +1,17 @@
 // 第六阶段批次一（§4.4 / 假设 5 修订）：前端可纯函数化逻辑抽 TS 模块入覆盖分母。
-// hash 路由解析（批次 6-1：tasks/approvals 两视图；后续批次扩视图注册表——女娲可插页面骨架，§4.5-4）。
+// hash 路由解析（批次 6-1：tasks/approvals；批次 6-2 扩 capabilities/evolution/agents/evidence——
+// 视图注册表骨架为女娲可插页面预留，§4.5-4）。
 
 export type PortalRoute =
   | { view: 'tasks' }
   | { view: 'task-detail'; id: string }
   | { view: 'approvals' }
   | { view: 'approval-detail'; id: string }
+  | { view: 'capabilities' }
+  | { view: 'evolution' }
+  | { view: 'evolution-detail'; id: string }
+  | { view: 'agent-detail'; id: string }
+  | { view: 'evidence' }
   | { view: 'not-found'; hash: string };
 
 export function parseHash(hash: string): PortalRoute {
@@ -16,5 +22,12 @@ export function parseHash(hash: string): PortalRoute {
   if (h === '/approvals') return { view: 'approvals' };
   const approvalMatch = /^\/approvals\/([^/]+)$/.exec(h);
   if (approvalMatch) return { view: 'approval-detail', id: decodeURIComponent(approvalMatch[1]) };
+  if (h === '/capabilities') return { view: 'capabilities' };
+  if (h === '/evolution') return { view: 'evolution' };
+  const evolutionMatch = /^\/evolution\/([^/]+)$/.exec(h);
+  if (evolutionMatch) return { view: 'evolution-detail', id: decodeURIComponent(evolutionMatch[1]) };
+  const agentMatch = /^\/agents\/([^/]+)$/.exec(h);
+  if (agentMatch) return { view: 'agent-detail', id: decodeURIComponent(agentMatch[1]) };
+  if (h === '/evidence') return { view: 'evidence' };
   return { view: 'not-found', hash };
 }
