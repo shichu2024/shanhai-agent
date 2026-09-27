@@ -90,6 +90,7 @@ async function runPortal(rest: string[]): Promise<void> {
     host: flags.host ?? config.portal?.host,
     port: flags.port ?? config.portal?.port,
     token: config.portal?.token,
+    operatorId: config.portal?.operatorId, // 写操作 who 来源标记（缺省 'portal'，批次 6-3 §4.3）
   });
   console.log(`[portal] 山海门户已启动：http://${handle.host}:${handle.port}/ （boot=${boot.skippedStartup ? '跳过崩溃恢复扫描（检测到 Running 任务）' : 'startup 完成'}）`);
   if (handle.tokenGenerated) {

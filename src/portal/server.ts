@@ -5,11 +5,13 @@ import type { Runtime } from '../runtime.js';
 import type { RecoveryReport } from '../modules/stateManager.js';
 import { ConfigError } from '../config.js';
 import { resolvePortalToken, bearerTokenOf, tokenMatches, hostAllowed } from './auth.js';
-import { handleApiGet, sendJson, sendApiError } from './api.js';
+import { handleApiGet, handleApiPost, sendJson, sendApiError, type ApiWriteContext } from './api.js';
+import { ResumeService } from './resume.js';
 
-// 第六阶段批次一（§4.1 / §5.1）：node:http 门户服务器——启动、路由分发、静态文件、错误兜底。
+// 第六阶段批次一（§4.1 / §5.1）+ 批次三（§4.3 写面）：node:http 门户服务器——启动、路由分发、静态文件、错误兜底。
 // 进程模型（D-42）：常驻单进程；boot 条件化 startup（Running>0 跳过 recover 并警示）；
-// 请求路径零 recover、零后台定时器。本批无写端点（6-3 扩写面）。
+// 请求路径零 recover、零后台定时器。写面（批次 6-3）：POST 全部经既有 Manager（零旁路），
+// resume 走 detached 子进程（D-46），崩溃恢复走既有 rt.startup()（P1-1 逃生侧）。
 
 export interface PortalServerOptions {
   dataDir: string;
@@ -20,6 +22,10 @@ export interface PortalServerOptions {
   port?: number;
   /** config portal.token 显式覆盖（解析序首位） */
   token?: string;
+  /** 写操作 who 来源标记（config portal.operatorId；缺省 'portal'，§4.3） */
+  operatorId?: string;
+  /** resume 执行面（缺省按 dataDir/repoRoot 构造；测试可注入） */
+  resume?: ResumeService;
 }
 
 export interface PortalHandle {
@@ -151,13 +157,16 @@ export async function startPortalServer(rt: Runtime, opts: PortalServerOptions):
   const host = opts.host ?? '127.0.0.1';
   const port = opts.port ?? envPortalPort() ?? 7780;
   const resolvedToken = resolvePortalToken(opts.dataDir, opts.token, process.env.SHANHAI_PORTAL_TOKEN);
+  const writeCtx: ApiWriteContext = {
+    ...(opts.operatorId !== undefined ? { operatorId: opts.operatorId } : {}),
+    resume: opts.resume ?? new ResumeService({ dataDir: opts.dataDir, repoRoot: opts.repoRoot }),
+  };
 
   const server = http.createServer((req, res) => {
-    try {
-      handleRequest(rt, opts.repoRoot, host, resolvedToken.token, req, res);
-    } catch (err) {
-      sendApiError(res, err); // 错误兜底：Manager 结构化错误 → errormap → HTTP
-    }
+    void handleRequest(rt, opts.repoRoot, host, resolvedToken.token, writeCtx, req, res).catch((err) => {
+      if (!res.headersSent) sendApiError(res, err); // 错误兜底：Manager 结构化错误 → errormap → HTTP
+      else res.end();
+    });
   });
 
   await new Promise<void>((resolvePromise, reject) => {
@@ -184,14 +193,15 @@ export async function stopPortalServer(handle: PortalHandle): Promise<void> {
   await handle.close();
 }
 
-function handleRequest(
+async function handleRequest(
   rt: Runtime,
   repoRoot: string,
   host: string,
   token: string,
+  writeCtx: ApiWriteContext,
   req: http.IncomingMessage,
   res: http.ServerResponse,
-): void {
+): Promise<void> {
   const port = (req.socket.address() as { port: number }).port;
   const url = new URL(req.url ?? '/', `http://${host}:${port}`);
   const pathname = url.pathname;
@@ -208,18 +218,35 @@ function handleRequest(
       sendJson(res, 401, { ok: false, code: 'unauthorized', message: '缺少或错误的 Bearer Token（Authorization: Bearer <token>）' });
       return;
     }
-    // ③ POST 强制 application/json（跨站简单请求协议层拒绝，P1-2-②）——先于路由
+    // ③ POST 强制 application/json（跨站简单请求协议层拒绝，P1-2-②）——先于路由；写面路由（批次 6-3）
     if (req.method === 'POST') {
       const contentType = req.headers['content-type'] ?? '';
       if (!/^application\/json\b/i.test(contentType)) {
         sendJson(res, 415, { ok: false, code: 'unsupported_media_type', message: `POST 仅接受 application/json（收到：${contentType || '(无 Content-Type)'}）` });
         return;
       }
-      sendJson(res, 404, { ok: false, code: 'not_found', message: '未知 API 路由（写面端点于批次 6-3 落地）' });
+      const raw = await readBody(req);
+      if (raw === null) {
+        sendJson(res, 413, { ok: false, code: 'payload_too_large', message: '请求体超过 1 MiB 上限' });
+        return;
+      }
+      let body: Record<string, unknown> = {};
+      if (raw.length > 0) {
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('非对象');
+          body = parsed as Record<string, unknown>;
+        } catch {
+          sendJson(res, 400, { ok: false, code: 'bad_request', message: '请求体不是合法的 JSON 对象' });
+          return;
+        }
+      }
+      if (handleApiPost(rt, pathname, body, res, writeCtx)) return;
+      sendJson(res, 404, { ok: false, code: 'not_found', message: `未知 API 路由：${req.method} ${pathname}` });
       return;
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
-      if (handleApiGet(rt, pathname, url.searchParams, res)) return;
+      if (handleApiGet(rt, pathname, url.searchParams, res, writeCtx)) return;
       sendJson(res, 404, { ok: false, code: 'not_found', message: `未知 API 路由：${req.method} ${pathname}` });
       return;
     }
@@ -233,4 +260,23 @@ function handleRequest(
     return;
   }
   sendJson(res, 405, { ok: false, code: 'method_not_allowed', message: `不支持的方法：${req.method}` });
+}
+
+/** 请求体读取（上限 1 MiB；超限丢弃并返回 null → 413） */
+function readBody(req: http.IncomingMessage): Promise<string | null> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    req.on('data', (c: Buffer) => {
+      total += c.length;
+      if (total > 1024 * 1024) {
+        req.removeAllListeners('data');
+        resolve(null);
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', () => resolve(null));
+  });
 }

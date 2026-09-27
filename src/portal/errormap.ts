@@ -13,6 +13,8 @@ const STATUS_BY_CODE: Record<string, number> = {
   invalid_bucket: 400,
   // EvidenceRefError（批次 6-2：/api/evidence/:ref 引用格式非法）
   invalid_ref: 400,
+  // ResumeError（批次 6-3：resume/resume-log taskId 白名单违规，P2-3）
+  invalid_task_id: 400,
   // EvidenceStore eval 预留位（批次 6-2：格式合法但零执行——不静默、不猜测）
   not_implemented: 501,
 };
