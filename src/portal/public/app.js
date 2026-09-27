@@ -1,4 +1,4 @@
-// 山海门户前端骨架（批次 6-1）：单页 + hash 路由 + 5s 轮询（§4.4）。
+// 山海门户前端（批次 6-1 骨架 + 6-2 读面全景 + 6-3 写操作流）：单页 + hash 路由 + 5s 轮询（§4.4）。
 // 硬性底线（TASK-81）：Token 不写入任何静态资产文件——仅经输入框存 sessionStorage，运行期注入请求头。
 // 逻辑口径与 src/portal/view/*.ts 纯函数模块同源（可测 TS 模块为规范源；本文件为零构建薄壳）。
 
@@ -22,6 +22,21 @@ function refreshTokenState() {
 
 async function api(path) {
   const res = await fetch(path, { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {} });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw Object.assign(new Error((body && body.message) || `HTTP ${res.status}`), { status: res.status, body });
+  return body;
+}
+
+// 批次 6-3：写操作（POST 强制 application/json——415 由服务端协议层封堵，此处恒发送该头）
+async function apiPost(path, bodyObj = {}) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: {
+      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(bodyObj),
+  });
   const body = await res.json().catch(() => null);
   if (!res.ok) throw Object.assign(new Error((body && body.message) || `HTTP ${res.status}`), { status: res.status, body });
   return body;
@@ -85,7 +100,9 @@ async function renderTasks(view) {
   const data = await api('/api/tasks?limit=100');
   const running = data.tasks.filter((t) => t.status === 'running');
   const warning = running.length
-    ? `<p class="warning">检测到 ${running.length} 个运行中任务（可能正由其他进程执行）。若确认其进程已不存在，可执行显式崩溃恢复（批次 6-3 落地）。</p>`
+    ? `<p class="warning">检测到 ${running.length} 个运行中任务（可能正由其他进程执行）。若确认其进程已不存在，可执行显式崩溃恢复
+       <button id="crash-recovery-btn" type="button">崩溃恢复…</button>
+       <span id="crash-recovery-out"></span></p>`
     : '';
   const rows = data.tasks
     .map(
@@ -102,6 +119,23 @@ async function renderTasks(view) {
     <h2>任务（共 ${data.total}）</h2>
     <table><thead><tr><th>taskId</th><th>agent</th><th>状态</th><th>创建时间</th><th>attempts</th><th>模型调用</th><th>tokens</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="7">（空）</td></tr>'}</tbody></table>`;
+  const crashBtn = document.getElementById('crash-recovery-btn');
+  if (crashBtn) {
+    crashBtn.addEventListener('click', async () => {
+      // 确认对话框（§5.1 逃生路径：明示误杀面——口径同 view/write.ts confirmCrashRecoveryText）
+      const text = `将把所有 Running 任务（当前 ${running.length} 个）标记为 Failed(CrashRecovery)，并执行孤儿快照清理、pending 审批作废与 trace 索引对账。请先确认这些任务的执行进程确实已不存在——正在执行的任务会被误杀且不可恢复。确认继续？`;
+      if (!window.confirm(text)) return;
+      const out = document.getElementById('crash-recovery-out');
+      try {
+        const r = await apiPost('/api/portal/crash-recovery');
+        const rep = r.report;
+        out.innerHTML = ` 已执行：崩溃标记 ${rep.crashMarkedTasks.length}、索引对账 ${rep.reconciledTasks.length}、stale 警示（queued ${rep.staleQueuedTasks.length} / paused ${rep.stalePausedTasks.length}）`;
+        render(location.hash);
+      } catch (err) {
+        out.innerHTML = ` <span class="error">失败：${esc(err.message)}</span>`;
+      }
+    });
+  }
 }
 
 // 事件类型标签（与 src/portal/view/events.ts 同源镜像；未知事件回退原文）
@@ -116,9 +150,10 @@ const EVENT_LABELS = {
 };
 
 async function renderTaskDetail(view, id) {
-  const t = await api(`/api/tasks/${encodeURIComponent(id)}`);
-  const events = await api(`/api/tasks/${encodeURIComponent(id)}/events`);
-  const chain = await api(`/api/tasks/${encodeURIComponent(id)}/evidence`);
+  const enc = encodeURIComponent(id);
+  const t = await api(`/api/tasks/${enc}`);
+  const events = await api(`/api/tasks/${enc}/events`);
+  const chain = await api(`/api/tasks/${enc}/evidence`);
   const eventRows = events
     .map(
       (e) => `<tr>
@@ -129,6 +164,15 @@ async function renderTaskDetail(view, id) {
       </tr>`,
     )
     .join('');
+  const canCancel = ['queued', 'running', 'paused'].includes(t.status);
+  const actions = `
+    <div id="task-actions">
+      ${t.status === 'paused' ? '<button id="resume-btn" type="button">续跑（manual-resume）</button>' : ''}
+      ${canCancel ? `<select id="cancel-mode">${t.status === 'running' ? '' : '<option value="graceful">graceful</option>'}<option value="force">force</option></select>
+      <button id="cancel-btn" type="button">取消任务</button>` : ''}
+      <span id="task-action-out" class="hint"></span>
+    </div>
+    <details id="resume-log-box" style="display:none"><summary>resume 子进程日志</summary><pre id="resume-log-pre"></pre></details>`;
   view.innerHTML = `<h2>任务 ${esc(t.taskId)}</h2>
     <dl>
       <dt>agent</dt><dd><a href="#/agents/${encodeURIComponent(t.agentId)}">${esc(t.agentId)}</a> @ ${esc(t.agentVersionId)}</dd>
@@ -137,6 +181,7 @@ async function renderTaskDetail(view, id) {
       <dt>attempts / 模型调用 / tokens</dt><dd>${t.attemptCount} / ${t.modelCallCount} / ${t.tokensUsed}</dd>
       <dt>cancelReason</dt><dd>${esc(t.cancelReason ?? '—')}</dd>
     </dl>
+    ${actions}
     <details><summary>input（存储字节原样，已脱敏）</summary><pre>${esc(t.input)}</pre></details>
     <h3>时间线（${events.length} 事件，原样）</h3>
     <table><thead><tr><th>时间</th><th>事件</th><th>调用面</th><th>eventId</th></tr></thead>
@@ -148,6 +193,49 @@ async function renderTaskDetail(view, id) {
       <dt>失败 / 记忆关联</dt><dd>${chain.failures.length} / ${chain.memories.length}</dd>
     </dl>
     <p><a href="#/tasks">← 返回任务列表</a></p>`;
+  const out = document.getElementById('task-action-out');
+  const resumeBtn = document.getElementById('resume-btn');
+  if (resumeBtn) {
+    resumeBtn.addEventListener('click', async () => {
+      try {
+        const r = await apiPost(`/api/tasks/${enc}/resume`);
+        const name = String(r.logFile).split(/[\\\\/]/).pop();
+        out.textContent = `已 spawn 续跑子进程（resumedBy=manual-resume；日志 ${name}）——状态以库为准`;
+        showResumeLog(enc);
+        setTimeout(() => render(location.hash), 1500);
+      } catch (err) {
+        out.innerHTML = `<span class="error">续跑失败：${esc(err.message)}（可改用 CLI task run --resume 兜底）</span>`;
+      }
+    });
+  }
+  const cancelBtn = document.getElementById('cancel-btn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', async () => {
+      const mode = document.getElementById('cancel-mode').value;
+      // running + graceful 服务端 409；force 二次确认（D-47：abortRequested 登记后等待原子调用边界）
+      if (mode === 'force' && !window.confirm('强制中止将登记 abortRequested，于下一个原子调用边界生效（模型调用不打断）。确认？')) return;
+      try {
+        const r = await apiPost(`/api/tasks/${enc}/cancel`, { mode });
+        out.textContent = `已取消（${r.mode}）：${r.note}`;
+        setTimeout(() => render(location.hash), 800);
+      } catch (err) {
+        if (err.status === 409) out.innerHTML = `<span class="error">${esc(err.message)}</span>`;
+        else out.innerHTML = `<span class="error">取消失败：${esc(err.message)}</span>`;
+      }
+    });
+  }
+}
+
+async function showResumeLog(enc) {
+  try {
+    const log = await api(`/api/tasks/${enc}/resume-log`);
+    const box = document.getElementById('resume-log-box');
+    if (!box) return;
+    box.style.display = '';
+    document.getElementById('resume-log-pre').textContent = log.content || '（日志为空）';
+  } catch {
+    /* 无日志（未 resume 过）——保持折叠 */
+  }
 }
 
 function timeoutLabel(row) {
@@ -175,12 +263,25 @@ async function renderApprovals(view) {
   view.innerHTML = `<h2>待审批（${rows.length}）</h2>
     <table><thead><tr><th>requestId</th><th>task</th><th>工具</th><th>决议</th><th>任务状态</th><th>剩余时间</th></tr></thead>
     <tbody>${trs || '<tr><td colspan="6">（无待审批）</td></tr>'}</tbody></table>
-    <p class="hint">决议操作（approve/deny）于批次 6-3 写面落地。</p>`;
+    <p class="hint">点击 requestId 进入详情执行 approve（只写决议，任务保持挂起，续跑为独立两步）/ deny（任务级终局）。</p>`;
 }
 
 async function renderApprovalDetail(view, id) {
-  const d = await api(`/api/approvals/${encodeURIComponent(id)}`);
+  const enc = encodeURIComponent(id);
+  const d = await api(`/api/approvals/${enc}`);
   const r = d.request;
+  // 决议区（§5.2：approve 只写 decision（--detach 语义）；deny 任务级终局；approved+paused = 已批准待续跑）
+  const decidable = r.decision === 'pending' && r.taskStatus === 'paused';
+  const decisionPanel = decidable
+    ? `<div id="approval-actions">
+        <button id="approve-btn" type="button">批准（approve）</button>
+        <input id="deny-reason" type="text" placeholder="拒绝理由（可选）" style="width: 220px" />
+        <button id="deny-btn" type="button">拒绝（deny）</button>
+        <span id="approval-action-out" class="hint"></span>
+      </div>`
+    : r.decision === 'approved' && r.taskStatus === 'paused'
+      ? `<div id="approval-actions"><p class="warning">已批准，待续跑——<a href="#/tasks/${encodeURIComponent(r.taskId)}">前往任务页</a>点击「续跑」（resumedBy=manual-resume）。</p></div>`
+      : '';
   view.innerHTML = `<h2>审批 ${esc(r.requestId)}</h2>
     <dl>
       <dt>task</dt><dd><a href="#/tasks/${encodeURIComponent(r.taskId)}">${esc(r.taskId)}</a>（${esc(r.taskStatus)}）</dd>
@@ -190,9 +291,36 @@ async function renderApprovalDetail(view, id) {
       <dt>argsDigest</dt><dd>${esc(d.argsDigest ?? '—')}</dd>
       <dt>绑定</dt><dd>${d.binding ? `${esc(d.binding.agentVersionId)} @ ${esc(d.binding.contentHash)}` : '—'}</dd>
     </dl>
+    ${decisionPanel}
     <details ${d.snapshot ? 'open' : ''}><summary>快照（savedAt=${esc(d.snapshot?.savedAt ?? '—')}，contextBytes=${esc(d.snapshot?.contextBytes ?? '—')}）</summary>
-      <p class="hint">快照上下文为 resume 执行面数据，门户只读展示元信息（写面决议操作于批次 6-3 落地）。</p></details>
+      <p class="hint">快照上下文为 resume 执行面数据，门户只读展示元信息。</p></details>
     <p><a href="#/approvals">← 返回审批列表</a></p>`;
+  const out = document.getElementById('approval-action-out');
+  const approveBtn = document.getElementById('approve-btn');
+  if (approveBtn) {
+    approveBtn.addEventListener('click', async () => {
+      try {
+        const res = await apiPost(`/api/approvals/${enc}/approve`);
+        out.textContent = `已批准（任务保持 ${res.taskStatus}，待续跑）`;
+        setTimeout(() => render(location.hash), 600);
+      } catch (err) {
+        out.innerHTML = `<span class="error">批准失败：${esc(err.message)}</span>`;
+      }
+    });
+  }
+  const denyBtn = document.getElementById('deny-btn');
+  if (denyBtn) {
+    denyBtn.addEventListener('click', async () => {
+      const reason = document.getElementById('deny-reason').value.trim();
+      try {
+        const res = await apiPost(`/api/approvals/${enc}/deny`, reason ? { reason } : {});
+        out.textContent = `已拒绝（任务终态 ${res.taskStatus}/${res.cancelReason}）`;
+        setTimeout(() => render(location.hash), 600);
+      } catch (err) {
+        out.innerHTML = `<span class="error">拒绝失败：${esc(err.message)}</span>`;
+      }
+    });
+  }
 }
 
 // ---------- 批次 6-2：读面全景视图 ----------

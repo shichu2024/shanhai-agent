@@ -8,11 +8,14 @@ import { buildCapabilityTrend } from '../modules/trend.js';
 import { buildAgentInsight } from '../modules/insight.js';
 import { buildAgentReport } from '../modules/report.js';
 import { queryT1 } from '../evidence.js';
+import type { ResumeService } from './resume.js';
 
-// 第六阶段批次一（§4.2）+ 批次二（读面全景）：API handler——参数解析 → 调用 Runtime 只读函数 → JSON 响应。
-// 纪律：门户层零正则二次处理（展示存储字节原样，§6-6）；A-37 读端点返回体与 CLI JSON 输出深度相等。
-// 零写入（D-48）：evolution 端点不执行 CLI 的惰性聚合（aggregateRepeatedFailures 是写路径）；
-// capability/insight 的 derived 惰性重算为 §4.2 既有语义（与 CLI 同构、幂等——settle 后零写入）。
+// 第六阶段批次一（§4.2）+ 批次二（读面全景）+ 批次三（§4.3 写面）：API handler。
+// 读面：参数解析 → 调用 Runtime 只读函数 → JSON 响应。纪律：门户层零正则二次处理（展示存储字节原样，§6-6）；
+// A-37 读端点返回体与 CLI JSON 输出深度相等。零写入（D-48）：evolution 端点不执行 CLI 的惰性聚合
+// （aggregateRepeatedFailures 是写路径）；capability/insight 的 derived 惰性重算为 §4.2 既有语义。
+// 写面（A-33 基准=§4.3 旗标映射表）：全部经既有 Manager（零旁路）；by=portal.operatorId ?? 'portal'
+// （事件 payload 不改，who 字段即来源标记）。
 
 export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
@@ -58,8 +61,14 @@ function sendEvidenceResult(
   sendJson(res, status(result.code), result);
 }
 
-/** GET 读面路由（批次 6-1：tasks / approvals；批次 6-2：events/evidence/capabilities/trend/insight/card/report/evolution）。返回 false = 未命中路由。 */
-export function handleApiGet(rt: Runtime, pathname: string, query: URLSearchParams, res: http.ServerResponse): boolean {
+/** 写面上下文（server 装配）：操作者标识 + resume 执行面 */
+export interface ApiWriteContext {
+  operatorId?: string;
+  resume: ResumeService;
+}
+
+/** GET 读面路由（批次 6-1：tasks / approvals；批次 6-2：读面全景；批次 6-3：resume-log）。返回 false = 未命中路由。 */
+export function handleApiGet(rt: Runtime, pathname: string, query: URLSearchParams, res: http.ServerResponse, ctx: ApiWriteContext): boolean {
   if (pathname === '/api/tasks') {
     const limit = intQuery(query, 'limit');
     const offset = intQuery(query, 'offset');
@@ -207,6 +216,20 @@ export function handleApiGet(rt: Runtime, pathname: string, query: URLSearchPara
     return true;
   }
 
+  // ---------- 批次 6-3：resume-log 读端点（§4.3） ----------
+
+  const resumeLogMatch = /^\/api\/tasks\/([^/]+)\/resume-log$/.exec(pathname);
+  if (resumeLogMatch) {
+    const taskId = decodeURIComponent(resumeLogMatch[1]);
+    const found = ctx.resume.readLog(taskId); // taskId 非法 → ResumeError(invalid_task_id) → 400
+    if (found === null) {
+      sendJson(res, 404, { ok: false, code: 'not_found', message: `该任务无 resume 日志：${taskId}` });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, taskId, logFile: found.logFile, content: found.content });
+    return true;
+  }
+
   return false;
 }
 
@@ -214,4 +237,74 @@ export function handleApiGet(rt: Runtime, pathname: string, query: URLSearchPara
 export function sendApiError(res: http.ServerResponse, err: unknown): void {
   const { status, body } = apiErrorPayload(err);
   sendJson(res, status, body);
+}
+
+// ---------- 批次 6-3：POST 写面路由（§4.3 旗标映射表；A-33 判定基准） ----------
+
+/** POST 写面路由。返回 false = 未命中路由（→ 404）。Content-Type 强制已由 server 前置完成（415，P1-2-②）。 */
+export function handleApiPost(rt: Runtime, pathname: string, body: Record<string, unknown>, res: http.ServerResponse, ctx: ApiWriteContext): boolean {
+  const who = ctx.operatorId ?? 'portal'; // who 字段即来源标记（§4.3，事件 payload 不改）
+
+  const approveMatch = /^\/api\/approvals\/([^/]+)\/approve$/.exec(pathname);
+  if (approveMatch) {
+    // ≡ `approval approve <id> --detach`：只写 decision（任务保持 Paused；迁移权归 resume 进程）
+    const requestId = decodeURIComponent(approveMatch[1]);
+    const { taskId } = rt.approvals.approve(requestId, who);
+    sendJson(res, 200, { ok: true, requestId, taskId, decision: 'approved', taskStatus: rt.tasks.getTask(taskId).status });
+    return true;
+  }
+
+  const denyMatch = /^\/api\/approvals\/([^/]+)\/deny$/.exec(pathname);
+  if (denyMatch) {
+    // ≡ `approval deny <id> [--reason <t>]`：任务终态 cancelled(approval_denied)
+    const requestId = decodeURIComponent(denyMatch[1]);
+    const reason = typeof body.reason === 'string' && body.reason.length > 0 ? body.reason : undefined;
+    const { taskId } = rt.approvals.deny(requestId, who, reason);
+    sendJson(res, 200, { ok: true, requestId, taskId, decision: 'denied', taskStatus: 'cancelled', cancelReason: 'approval_denied' });
+    return true;
+  }
+
+  const cancelMatch = /^\/api\/tasks\/([^/]+)\/cancel$/.exec(pathname);
+  if (cancelMatch) {
+    // graceful≡`task cancel <id>`；force≡`task cancel <id> --force`（body.mode 显式二选一）
+    const taskId = decodeURIComponent(cancelMatch[1]);
+    const mode = body.mode;
+    if (mode !== 'graceful' && mode !== 'force') {
+      sendJson(res, 400, { ok: false, code: 'bad_request', message: `mode 必须为 graceful 或 force（收到：${JSON.stringify(mode ?? null)}）` });
+      return true;
+    }
+    const row = rt.tasks.getTask(taskId); // 不存在 → 抛「任务不存在」→ 404
+    if (row.status === 'running' && mode === 'graceful') {
+      // 前置校验（D-47/P3-1）：跨进程 graceful 在 Manager 内抛非结构化 Error——服务端直接 409，不进入 Manager
+      sendJson(res, 409, {
+        ok: false,
+        code: 'cross_process_graceful_unsupported',
+        message: `任务 ${taskId} 由独立进程执行中，仅支持强制中止（mode=force：下一个原子调用边界生效，模型调用不打断）`,
+      });
+      return true;
+    }
+    const result = rt.tasks.cancel(taskId, who, { force: mode === 'force' });
+    sendJson(res, 200, { ok: true, ...result });
+    return true;
+  }
+
+  const resumeMatch = /^\/api\/tasks\/([^/]+)\/resume$/.exec(pathname);
+  if (resumeMatch) {
+    // ≡ `task run --resume <id> --resumed-by manual-resume`（detached spawn，D-46）；HTTP 立即返回不阻塞
+    const taskId = decodeURIComponent(resumeMatch[1]);
+    rt.tasks.getTask(taskId); // 不存在 → 404；状态校验留给子进程（重复 resume 第二子进程 CAS 失败退出，A-36）
+    const spawned = ctx.resume.spawnResume(taskId, who); // taskId 非法 → ResumeError(invalid_task_id) → 400
+    sendJson(res, 200, { ok: true, taskId, spawned: true, resumedBy: 'manual-resume', pid: spawned.pid, logFile: spawned.logFile });
+    return true;
+  }
+
+  if (pathname === '/api/portal/crash-recovery') {
+    // 显式崩溃恢复（P1-1 逃生侧）：既有 rt.startup('portal') 全段 recover（零旁路）——
+    // Running→Failed(CrashRecovery)、孤儿快照清理、pending superseded、trace 索引对账；响应回传 RecoveryReport。
+    const report = rt.startup('portal');
+    sendJson(res, 200, { ok: true, report });
+    return true;
+  }
+
+  return false;
 }
