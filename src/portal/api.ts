@@ -226,7 +226,7 @@ export function handleApiGet(rt: Runtime, pathname: string, query: URLSearchPara
       sendJson(res, 404, { ok: false, code: 'not_found', message: `该任务无 resume 日志：${taskId}` });
       return true;
     }
-    sendJson(res, 200, { ok: true, taskId, logFile: found.logFile, content: found.content });
+    sendJson(res, 200, { ok: true, taskId, logFile: found.logFile, content: found.content, truncated: found.truncated });
     return true;
   }
 

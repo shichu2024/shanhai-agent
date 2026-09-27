@@ -16,6 +16,7 @@ import { buildAgentInsight } from './modules/insight.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 import { loadRuntimeConfig } from './config.js';
 import { bootPortal, startPortalServer, parsePortalArgs } from './portal/server.js';
+import { buildResumeSpawnArgs } from './portal/resume.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
 
@@ -310,8 +311,16 @@ async function main(): Promise<void> {
           console.log(JSON.stringify({ ok: true, requestId, taskId, decision: 'approved', spawned: false, note: '--detach：任务停留 Paused，由 task run --resume 手动续跑' }, null, 2));
         } else {
           console.log(JSON.stringify({ ok: true, requestId, taskId, decision: 'approved', spawned: true, resumedBy: 'approve-spawn' }, null, 2));
-          const cliEntry = path.resolve(process.argv[1] ?? 'dist/cli.js');
-          const child = spawn(process.execPath, [cliEntry, 'task', 'run', '--resume', taskId, '--resumed-by', 'approve-spawn', '--by', by], { stdio: 'inherit' });
+          // 批次 6-4 P3-① 收口：spawn 参数经 buildResumeSpawnArgs 单一构造——透传 process.execArgv
+          // （对齐 resume.ts 先例：开发态 tsx 直跑 argv[1]=.ts 须复现装载旗标；dist 态 execArgv=[] 行为不变）。
+          const child = spawn(
+            process.execPath,
+            buildResumeSpawnArgs(taskId, 'approve-spawn', by, {
+              cliEntry: path.resolve(process.argv[1] ?? 'dist/cli.js'),
+              execArgv: process.execArgv,
+            }),
+            { stdio: 'inherit' },
+          );
           const code: number = await new Promise((resolve) => {
             child.on('exit', (c) => resolve(c ?? 0));
             child.on('error', () => resolve(1));
@@ -417,7 +426,14 @@ async function main(): Promise<void> {
       } else if (sub === 'show') {
         const [candidateId] = pos;
         if (!candidateId) usage();
-        console.log(JSON.stringify(rt.evolutions.get(candidateId), null, 2));
+        // 批次 6-4 P3 收口（批次二瑕疵）：候选不存在时不再打印 null/exit 0——
+        // 与门户 GET /api/evolution/:id 404 语义对齐：stderr 结构化 not_found + exit 1（tool show 同款先例）
+        const row = rt.evolutions.get(candidateId);
+        if (!row) {
+          console.error(JSON.stringify({ ok: false, code: 'not_found', message: `演进候选不存在（无候选可展示）：${candidateId}` }));
+          process.exit(1);
+        }
+        console.log(JSON.stringify(row, null, 2));
       } else if (sub === 'confirm') {
         const [candidateId] = pos;
         if (!candidateId) usage();
@@ -550,6 +566,10 @@ async function main(): Promise<void> {
     default:
       usage();
   }
+  // 批次 6-4（P3-① 收口实测发现）：命令结束时释放 Runtime——MCP bridge 按需 spawn 的子进程
+  // 句柄若不释放，进程在命令完成后仍被事件循环持有不退出（task run 执行 external 工具后挂死；
+  // approval approve 前台 spawn 等待子进程退出同受影响）。portal 路径不受影响（SIGINT/SIGTERM 释放）。
+  rt.close();
 }
 
 /** MCP connect 确认清单（§4.2-1 manual 档）：逐工具评级确认（回车 = 缺省 L3；n = 中止）；返回 null = 中止 */
