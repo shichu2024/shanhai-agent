@@ -41,6 +41,13 @@ function routeOf(hash) {
   if (h === '/approvals') return { view: 'approvals' };
   const a = /^\/approvals\/([^/]+)$/.exec(h);
   if (a) return { view: 'approval-detail', id: decodeURIComponent(a[1]) };
+  if (h === '/capabilities') return { view: 'capabilities' };
+  if (h === '/evolution') return { view: 'evolution' };
+  const e = /^\/evolution\/([^/]+)$/.exec(h);
+  if (e) return { view: 'evolution-detail', id: decodeURIComponent(e[1]) };
+  const g = /^\/agents\/([^/]+)$/.exec(h);
+  if (g) return { view: 'agent-detail', id: decodeURIComponent(g[1]) };
+  if (h === '/evidence') return { view: 'evidence' };
   return { view: 'not-found', hash };
 }
 
@@ -60,6 +67,11 @@ async function render(hash) {
     else if (route.view === 'task-detail') await renderTaskDetail(view, route.id);
     else if (route.view === 'approvals') await renderApprovals(view);
     else if (route.view === 'approval-detail') await renderApprovalDetail(view, route.id);
+    else if (route.view === 'capabilities') await renderCapabilities(view);
+    else if (route.view === 'evolution') await renderEvolution(view);
+    else if (route.view === 'evolution-detail') await renderEvolutionDetail(view, route.id);
+    else if (route.view === 'agent-detail') await renderAgentDetail(view, route.id);
+    else if (route.view === 'evidence') renderEvidence(view);
     else view.innerHTML = `<p>未找到视图：${esc(route.hash)}</p>`;
   } catch (err) {
     view.innerHTML = `<p class="error">加载失败：${esc(err.message)}${err.status === 401 ? '（请先在右上角保存门户 Token）' : ''}</p>`;
@@ -92,17 +104,49 @@ async function renderTasks(view) {
     <tbody>${rows || '<tr><td colspan="7">（空）</td></tr>'}</tbody></table>`;
 }
 
+// 事件类型标签（与 src/portal/view/events.ts 同源镜像；未知事件回退原文）
+const EVENT_LABELS = {
+  task_created: '任务创建', task_queued: '进入队列', task_started: '开始执行', attempt_started: '尝试开始',
+  model_call_completed: '模型调用完成', tool_call_requested: '工具调用请求', tool_call_executed: '工具调用完成',
+  policy_denied: '策略拒绝', attempt_failed: '尝试失败', task_succeeded: '执行成功', task_failed: '执行失败',
+  task_cancelled: '任务取消', crash_recovery_marked: '崩溃恢复标记', contract_checked: '契约校验',
+  approval_requested: '审批请求', approval_decided: '审批决议', task_paused: '任务挂起', task_resumed: '任务续跑',
+  task_delegated: '委托子任务', task_delegation_completed: '委托完成',
+  memory_written: '记忆写入', memory_loaded: '记忆注入', memory_state_changed: '记忆状态迁移',
+};
+
 async function renderTaskDetail(view, id) {
   const t = await api(`/api/tasks/${encodeURIComponent(id)}`);
+  const events = await api(`/api/tasks/${encodeURIComponent(id)}/events`);
+  const chain = await api(`/api/tasks/${encodeURIComponent(id)}/evidence`);
+  const eventRows = events
+    .map(
+      (e) => `<tr>
+        <td>${esc(e.timestamp)}</td>
+        <td>${esc(EVENT_LABELS[e.eventType] || e.eventType)}</td>
+        <td>${esc(e.callKind ? `调用 ${e.callNo} · ${e.callKind}` : '—')}</td>
+        <td>${esc(e.eventId)}</td>
+      </tr>`,
+    )
+    .join('');
   view.innerHTML = `<h2>任务 ${esc(t.taskId)}</h2>
     <dl>
-      <dt>agent</dt><dd>${esc(t.agentId)} @ ${esc(t.agentVersionId)}</dd>
+      <dt>agent</dt><dd><a href="#/agents/${encodeURIComponent(t.agentId)}">${esc(t.agentId)}</a> @ ${esc(t.agentVersionId)}</dd>
       <dt>状态</dt><dd class="status-${esc(t.status)}">${esc(STATUS_LABELS[t.status] || t.status)}</dd>
       <dt>创建 / 结束</dt><dd>${esc(t.createdAt)} → ${esc(t.endedAt ?? '—')}</dd>
       <dt>attempts / 模型调用 / tokens</dt><dd>${t.attemptCount} / ${t.modelCallCount} / ${t.tokensUsed}</dd>
       <dt>cancelReason</dt><dd>${esc(t.cancelReason ?? '—')}</dd>
     </dl>
     <details><summary>input（存储字节原样，已脱敏）</summary><pre>${esc(t.input)}</pre></details>
+    <h3>时间线（${events.length} 事件，原样）</h3>
+    <table><thead><tr><th>时间</th><th>事件</th><th>调用面</th><th>eventId</th></tr></thead>
+      <tbody>${eventRows || '<tr><td colspan="4">（无事件）</td></tr>'}</tbody></table>
+    <h3>证据链（trace 对账 ${chain.trace.consistent ? '一致' : '分叉'}：索引 ${chain.trace.traceIndexRows} 行 / JSONL ${chain.trace.jsonlEvents} 事件）</h3>
+    <dl>
+      <dt>信封</dt><dd>${esc(chain.envelope.agentId)} @ ${esc(chain.envelope.agentVersionId)}（spec ${esc(chain.envelope.specContentHash.slice(0, 12))}…）</dd>
+      <dt>委托链</dt><dd>祖先 ${chain.delegationChain.ancestors.length} / 后代 ${chain.delegationChain.descendants.length}</dd>
+      <dt>失败 / 记忆关联</dt><dd>${chain.failures.length} / ${chain.memories.length}</dd>
+    </dl>
     <p><a href="#/tasks">← 返回任务列表</a></p>`;
 }
 
@@ -147,8 +191,144 @@ async function renderApprovalDetail(view, id) {
       <dt>绑定</dt><dd>${d.binding ? `${esc(d.binding.agentVersionId)} @ ${esc(d.binding.contentHash)}` : '—'}</dd>
     </dl>
     <details ${d.snapshot ? 'open' : ''}><summary>快照（savedAt=${esc(d.snapshot?.savedAt ?? '—')}，contextBytes=${esc(d.snapshot?.contextBytes ?? '—')}）</summary>
-      <p class="hint">快照上下文详情端点于批次 6-2 落地。</p></details>
+      <p class="hint">快照上下文为 resume 执行面数据，门户只读展示元信息（写面决议操作于批次 6-3 落地）。</p></details>
     <p><a href="#/approvals">← 返回审批列表</a></p>`;
+}
+
+// ---------- 批次 6-2：读面全景视图 ----------
+
+const CAP_STATUS_LABELS = { candidate: '待确认', active: '已生效', retired: '已退场' };
+const EVO_STATUS_LABELS = { open: '待裁决', confirmed: '已确认', dismissed: '已驳回' };
+
+async function renderCapabilities(view) {
+  const rows = await api('/api/capabilities');
+  const trs = rows
+    .map(
+      (r) => `<tr>
+        <td>${esc(r.capabilityId.slice(0, 8))}…</td>
+        <td><a href="#/agents/${encodeURIComponent(r.agentId)}">${esc(r.agentId)}</a></td>
+        <td>${esc(r.kind)}</td>
+        <td>${esc(r.origin)}</td>
+        <td>${esc(r.statement)}</td>
+        <td>${esc(CAP_STATUS_LABELS[r.status] || r.status)}</td>
+        <td>${r.evidencePending ? '草稿（无证据）' : r.evidenceRefs.length}</td>
+      </tr>`,
+    )
+    .join('');
+  view.innerHTML = `<h2>能力/限制断言（${rows.length}）</h2>
+    <table><thead><tr><th>capabilityId</th><th>agent</th><th>kind</th><th>origin</th><th>statement</th><th>状态</th><th>证据</th></tr></thead>
+    <tbody>${trs || '<tr><td colspan="7">（空——Registry 无条目非错误）</td></tr>'}</tbody></table>`;
+}
+
+function jsonBlock(title, obj) {
+  return `<details><summary>${esc(title)}</summary><pre>${esc(JSON.stringify(obj, null, 2))}</pre></details>`;
+}
+
+async function renderAgentDetail(view, id) {
+  const enc = encodeURIComponent(id);
+  const [card, insight, trend, report] = await Promise.all([
+    api(`/api/agents/${enc}/card`),
+    api(`/api/agents/${enc}/insight`).catch(() => null),
+    api(`/api/agents/${enc}/trend`),
+    api(`/api/agents/${enc}/report`),
+  ]);
+  const insightSection = insight
+    ? `<h3>自我认知报告</h3>
+      <dl>
+        <dt>断言面（active）</dt><dd>${esc(`capability ${insight.assertions.active.counts.capability} / limitation ${insight.assertions.active.counts.limitation}`)}；open candidates ${insight.assertions.openCandidates.total}（evidencePending ${insight.assertions.openCandidates.evidencePending}）</dd>
+        <dt>行为面</dt><dd>${insight.behavior.status === 'ok' ? `正常（${insight.behavior.buckets.length} 桶）` : esc(insight.behavior.insufficientNote ?? '样本不足')}</dd>
+        <dt>限制条目</dt><dd>${insight.limitations.entries.length}</dd>
+      </dl>
+      ${jsonBlock('insight 完整 JSON（只读制品，永不存储）', insight)}`
+    : '<h3>自我认知报告</h3><p class="hint">（无当前指针版本——card 导出需显式 versionId 或已 release）</p>';
+  view.innerHTML = `<h2>Agent ${esc(id)}</h2>
+    <h3>Agent Card（声明面，只读派生）</h3>
+    <dl>
+      <dt>版本</dt><dd>${esc(card.versionId)}（spec ${esc(card.specVersion)}，content ${esc(card.contentHash.slice(0, 12))}…）</dd>
+      <dt>职责</dt><dd>${esc(card.mission.responsibilities.join('；') || '—')}</dd>
+      <dt>非目标</dt><dd>${esc(card.nonGoals.join('；') || '—')}</dd>
+      <dt>工具</dt><dd>${card.tools.length} 项（${esc(card.tools.map((t) => `${t.toolId}:${t.riskLevel}`).join(', ') || '—')}）</dd>
+    </dl>
+    ${jsonBlock('card 完整 JSON', card)}
+    ${insightSection}
+    <h3>能力趋势（缺省 day 桶，近 30 天窗）</h3>
+    <p>${trend.buckets.length ? `最新桶 ${esc(trend.buckets[trend.buckets.length - 1].key)}：任务 ${trend.buckets[trend.buckets.length - 1].tasks.total} / 通过率 ${trend.buckets[trend.buckets.length - 1].tasks.contractPassRate ?? 'null（无分母不假装）'}` : '（窗口内无数据）'} · ${esc(trend.coverage.note)}</p>
+    ${jsonBlock('trend 完整 JSON', trend)}
+    <h3>分组通过率报告</h3>
+    <dl>
+      <dt>分组</dt><dd>${report.groups.length} 组</dd>
+      <dt>promote 判据</dt><dd>${esc(report.promoteCriteria.status)}（canary 样本 ${report.promoteCriteria.canarySample}）</dd>
+      <dt>健康面板</dt><dd>${report.healthPanel.triggered ? '⚠️ OTel 触发条件已满足' : '未触发'}（Trace 事件 ${report.healthPanel.traceEventCount} / 文件 ${report.healthPanel.traceFileCount}）</dd>
+    </dl>
+    ${jsonBlock('report 完整 JSON', report)}
+    <p><a href="#/tasks">← 返回任务列表</a></p>`;
+}
+
+async function renderEvolution(view) {
+  const rows = await api('/api/evolution');
+  const trs = rows
+    .map(
+      (r) => {
+        let count = 0;
+        try { count = JSON.parse(r.evidenceRefs).length; } catch { count = 0; }
+        return `<tr>
+          <td><a href="#/evolution/${encodeURIComponent(r.candidateId)}">${esc(r.candidateId.slice(0, 8))}…</a></td>
+          <td><a href="#/agents/${encodeURIComponent(r.agentId)}">${esc(r.agentId)}</a></td>
+          <td>${esc(r.trigger)}</td>
+          <td>${esc(EVO_STATUS_LABELS[r.status] || r.status)}</td>
+          <td>${count}</td>
+          <td>${esc(r.createdAt)}</td>
+        </tr>`;
+      },
+    )
+    .join('');
+  view.innerHTML = `<h2>演进候选（${rows.length}）</h2>
+    <table><thead><tr><th>candidateId</th><th>agent</th><th>触发器</th><th>状态</th><th>证据</th><th>创建时间</th></tr></thead>
+    <tbody>${trs || '<tr><td colspan="6">（空）</td></tr>'}</tbody></table>
+    <p class="hint">门户读面不触发惰性聚合（零写入）——新候选由 CLI evolution list 聚合生成。</p>`;
+}
+
+async function renderEvolutionDetail(view, id) {
+  const row = await api(`/api/evolution/${encodeURIComponent(id)}`);
+  view.innerHTML = `<h2>演进候选 ${esc(row.candidateId)}</h2>
+    <dl>
+      <dt>agent</dt><dd><a href="#/agents/${encodeURIComponent(row.agentId)}">${esc(row.agentId)}</a></dd>
+      <dt>触发器 / 状态</dt><dd>${esc(row.trigger)} / ${esc(EVO_STATUS_LABELS[row.status] || row.status)}</dd>
+      <dt>提议变更</dt><dd>${esc(row.proposedChange ?? '—')}</dd>
+    </dl>
+    ${jsonBlock('候选完整 JSON（evidenceRefs 含证据回链）', row)}
+    <p><a href="#/evolution">← 返回演进列表</a></p>`;
+}
+
+function renderEvidence(view) {
+  view.innerHTML = `<h2>证据查询</h2>
+    <p class="hint">ref 格式 <code>&lt;kind&gt;:&lt;id&gt;</code>，kind ∈ task / trace_event / failure / memory / eval（eval 为预留位）。</p>
+    <form id="evidence-form">
+      <input id="evidence-ref" type="text" placeholder="task:t-123456" style="width: 320px" />
+      <button type="submit">查询</button>
+    </form>
+    <div id="evidence-result"><p class="hint">payload 为已脱敏落盘体原文（存储字节原样，不二次处理）。</p></div>`;
+  document.getElementById('evidence-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const raw = document.getElementById('evidence-ref').value.trim();
+    const out = document.getElementById('evidence-result');
+    const parts = raw.split(':');
+    if (parts.length !== 2 || !['task', 'trace_event', 'failure', 'memory', 'eval'].includes(parts[0]) || !parts[1]) {
+      out.innerHTML = '<p class="error">ref 格式非法（须 <kind>:<id>，kind 在封闭枚举内）</p>';
+      return;
+    }
+    try {
+      const r = await api(`/api/evidence/${encodeURIComponent(raw)}`);
+      out.innerHTML = `<dl>
+          <dt>信封</dt><dd>${esc(r.envelope.agentId)} @ ${esc(r.envelope.agentVersionId)}（任务 ${esc(r.envelope.taskId)}）</dd>
+          <dt>状态 / 时间</dt><dd>${esc(r.status)} / ${esc(r.occurredAt)}</dd>
+          <dt>digest</dt><dd>${esc(r.digest.slice(0, 12))}…（sha256(payload)）</dd>
+        </dl>
+        <details ${r.payload.length > 2048 ? '' : 'open'}><summary>payload（${r.payload.length} 字符${r.payload.length > 2048 ? '，超 2KB 默认折叠' : ''}）</summary><pre>${esc(r.payload)}</pre></details>`;
+    } catch (err) {
+      out.innerHTML = `<p class="error">查询失败：${esc(err.message)}</p>`;
+    }
+  });
 }
 
 function restartPolling() {

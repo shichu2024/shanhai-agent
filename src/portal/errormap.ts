@@ -8,9 +8,13 @@ const STATUS_BY_CODE: Record<string, number> = {
   task_not_paused: 409,
   version_mismatch: 409,
   timeout_applied: 409,
-  // TrendError 族（批次 6-2 读面全景将消费，先入表）
+  // TrendError 族（批次 6-2 读面全景消费：结构化 400，不裸抛 500）
   invalid_bound: 400,
   invalid_bucket: 400,
+  // EvidenceRefError（批次 6-2：/api/evidence/:ref 引用格式非法）
+  invalid_ref: 400,
+  // EvidenceStore eval 预留位（批次 6-2：格式合法但零执行——不静默、不猜测）
+  not_implemented: 501,
 };
 
 /** 错误码 → HTTP 状态（未知码 → 500 兜底，不向上抛裸异常面） */
@@ -27,6 +31,11 @@ export interface ApiErrorBody {
 
 /** 结构化错误载荷（识别带 code 的 Manager 错误；无 code 的通用错误归 internal_error） */
 export function apiErrorPayload(err: unknown): { status: number; body: ApiErrorBody } {
+  // RegistrationError（批次 6-2）：门户读面仅经 agentCard/insight 触达（无指针版本 / 版本不存在——
+  // CLI 面同错误 exit 1）；无结构化 code 字段，按 name 归 404（本层只服务读面，注册校验类不经过此处）。
+  if (err instanceof Error && err.name === 'RegistrationError') {
+    return { status: 404, body: { ok: false, code: 'not_found', message: err.message } };
+  }
   if (err instanceof Error && typeof (err as Error & { code?: unknown }).code === 'string') {
     const code = (err as Error & { code: string }).code;
     return {
