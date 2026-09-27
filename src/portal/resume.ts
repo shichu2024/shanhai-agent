@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync, unlinkSync, fstatSync } from 'node:fs';
 import path from 'node:path';
 
 // 第六阶段批次三（§4.3 / D-46 / P2-2 / P2-3 / P3-3）：resume 执行面——detached 子进程 spawn + 日志落盘 + 存活查询。
@@ -35,6 +35,51 @@ export function defaultCliEntry(): string {
   return path.resolve(process.argv[1] ?? 'dist/cli.js');
 }
 
+/**
+ * resume 子进程 spawn 参数单一构造（批次 6-4 P3-① 收口：CLI `approval approve` 前台
+ * spawn 与门户 ResumeService detached spawn 复用同一构造——execArgv 透传先例固化）。
+ * 参数序 = [...execArgv, cliEntry, 'task','run','--resume',taskId,'--resumed-by',resumedBy,'--by',by]。
+ * execArgv 缺省空数组（dist 形态行为不变）；开发态（tsx 直跑）传 process.execArgv 复现装载旗标。
+ */
+export function buildResumeSpawnArgs(
+  taskId: string,
+  resumedBy: string,
+  by: string,
+  opts: { cliEntry?: string; execArgv?: string[] } = {},
+): string[] {
+  return [
+    ...(opts.execArgv ?? []),
+    opts.cliEntry ?? defaultCliEntry(),
+    'task', 'run', '--resume', taskId, '--resumed-by', resumedBy, '--by', by,
+  ];
+}
+
+/** P3-1（批次 6-4 收口）：resume 日志保留天数——超龄惰性清理（spawn 触发；取舍见 cleanupOldLogs） */
+export const RESUME_LOG_MAX_AGE_DAYS = 7;
+
+/** P3-1（批次 6-4 收口）：readLog 读取上限（字节）——超限只读末尾并标注（预算保护，防超大日志拖垮门户） */
+export const RESUME_LOG_MAX_READ_BYTES = 256 * 1024;
+
+/**
+ * P3-1 超龄日志惰性清理：仅在 spawnResume 写路径触发（每次 spawn 扫描 logs 目录，
+ * unlink mtime 早于 7 天前的 resume-*.log）。取舍成文：不在 readLog 读路径清理
+ * （读路径零副作用），不设后台定时器（D-42 零后台定时器纪律）——门户长期无 resume
+ * 操作时旧日志留存，由下一次 spawn 一并回收。删除失败跳过（不阻塞 resume 主流程）。
+ */
+function cleanupOldLogs(dir: string, now = Date.now()): void {
+  if (!existsSync(dir)) return;
+  const cutoff = now - RESUME_LOG_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  for (const f of readdirSync(dir)) {
+    if (!/^resume-.+\.log$/.test(f)) continue;
+    const resolved = path.resolve(dir, f);
+    try {
+      if (statSync(resolved).mtimeMs < cutoff) unlinkSync(resolved);
+    } catch {
+      continue; // 竞态/权限等：跳过该候选（清理是尽力而为，不阻塞 resume）
+    }
+  }
+}
+
 export interface ResumeSpawnResult {
   pid: number;
   logFile: string;
@@ -55,6 +100,31 @@ export interface ResumeServiceOptions {
   execPath?: string;
   /** Node 装载旗标（缺省 process.execArgv；测试可注入）——开发态（tsx 直跑）复现本进程装载器，dist 态为空数组 */
   execArgv?: string[];
+}
+
+/**
+ * P3-1：带上限的尾部读取——文件 ≤ 上限全文返回（truncated=false）；超限只读末尾
+ * RESUME_LOG_MAX_READ_BYTES 字节（尾部=最新输出），内容前置标注行（truncated=true）。
+ * 经 openSync/readSync 按偏移读，不整读超大文件。
+ */
+function readLogTail(file: string): { content: string; truncated: boolean } {
+  const fd = openSync(file, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= RESUME_LOG_MAX_READ_BYTES) {
+      const buf = Buffer.alloc(size);
+      readSync(fd, buf, 0, size, 0);
+      return { content: buf.toString('utf8'), truncated: false };
+    }
+    const buf = Buffer.alloc(RESUME_LOG_MAX_READ_BYTES);
+    readSync(fd, buf, 0, RESUME_LOG_MAX_READ_BYTES, size - RESUME_LOG_MAX_READ_BYTES);
+    const note =
+      `[... 日志超过读取上限 ${RESUME_LOG_MAX_READ_BYTES} 字节（全文 ${size} 字节），` +
+      `已截断仅保留末尾 ${RESUME_LOG_MAX_READ_BYTES} 字节；截断为字节级，首字符可能为替换符 ...]\n`;
+    return { content: note + buf.toString('utf8'), truncated: true };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export class ResumeService {
@@ -79,17 +149,17 @@ export class ResumeService {
     requireSafeTaskId(taskId);
     const dir = this.logsDir();
     mkdirSync(dir, { recursive: true });
+    cleanupOldLogs(dir); // P3-1：写路径惰性清理（7 天保留；读路径零副作用）
     const logFile = path.join(dir, `resume-${taskId}-${process.hrtime.bigint().toString()}.log`);
     const fd = openSync(logFile, 'a');
     let child;
     try {
       child = spawn(
         this.opts.execPath ?? process.execPath,
-        [
-          ...(this.opts.execArgv ?? process.execArgv),
-          this.opts.cliEntry ?? defaultCliEntry(),
-          'task', 'run', '--resume', taskId, '--resumed-by', 'manual-resume', '--by', by,
-        ],
+        buildResumeSpawnArgs(taskId, 'manual-resume', by, {
+          cliEntry: this.opts.cliEntry,
+          execArgv: this.opts.execArgv ?? process.execArgv,
+        }),
         {
           detached: true,
           stdio: ['ignore', fd, fd],
@@ -113,8 +183,11 @@ export class ResumeService {
    * 最近一次 resume 日志：文件系统为真源，按 mtime 取最新 resume-<taskId>-<ns>.log（P2-3/P3-3——
    * 门户重启后内存 map 为空同样可查，即回落路径与常态同一条代码）；文件名形态精确匹配（尾段纯数字 ns），
    * taskId 相邻前缀任务不串档（t-m 不匹配 resume-t-m-2-9.log）。
+   * P3-1（批次 6-4 收口）：读取上限 RESUME_LOG_MAX_READ_BYTES 字节——超限只读末尾（尾部是最新输出），
+   * 内容前置标注行并置 truncated=true；截断为字节级，头字节若切在多字节 UTF-8 序列中间会出现替换符（口径成文）。
+   * 读路径零副作用（不触发清理）。
    */
-  readLog(taskId: string): { logFile: string; content: string } | null {
+  readLog(taskId: string): { logFile: string; content: string; truncated: boolean } | null {
     requireSafeTaskId(taskId);
     const dir = this.logsDir();
     const nameRe = new RegExp(`^resume-${taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+\\.log$`);
@@ -136,7 +209,7 @@ export class ResumeService {
       }
     }
     if (best === null) return null;
-    return { logFile: best, content: readFileSync(best, 'utf8') };
+    return { logFile: best, ...readLogTail(best) };
   }
 
   /** 存活查询（前端「已续跑」状态展示）：登记 pid + 日志位置；未登记 → null */

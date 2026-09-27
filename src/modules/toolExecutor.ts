@@ -327,8 +327,13 @@ class ToolTimeoutMarker extends Error {
   }
 }
 function withTimeout<T>(p: Promise<T> | T, ms: number): Promise<T> {
-  return Promise.race([
-    Promise.resolve(p),
-    new Promise<never>((_, rej) => setTimeout(() => rej(new ToolTimeoutMarker()), ms)),
-  ]) as Promise<T>;
+  // 批次 6-4（P3-① 收口实测发现）：竞速落定后清掉超时定时器——原实现留 ref'd 定时器跑满
+  // toolTimeoutMs（30s），真实 CLI 进程在命令完成后被事件循环多持有 30s 才退出
+  // （approval approve 前台 spawn 等待子进程退出同受影响）。竞速语义不变，仅释放资源。
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => rej(new ToolTimeoutMarker()), ms);
+  });
+  return Promise.race([Promise.resolve(p), timeout])
+    .finally(() => clearTimeout(timer)) as Promise<T>;
 }
