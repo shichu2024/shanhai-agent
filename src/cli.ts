@@ -17,6 +17,7 @@ import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 import { loadRuntimeConfig } from './config.js';
 import { bootPortal, startPortalServer, parsePortalArgs } from './portal/server.js';
 import { buildResumeSpawnArgs } from './portal/resume.js';
+import { shouldAutoOpenBrowser, buildPortalUrl, openBrowser, markBrowserOpened } from './portal/browser.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
 
@@ -73,7 +74,7 @@ function usage(): never {
   shanhai query t1 <taskId>
   shanhai query t2 <versionId>
   shanhai query t2p <versionId>                                    （T2′ 审批可举证）
-  shanhai portal [--port N] [--host H]                             （山海门户：常驻本机操作台；缺省 127.0.0.1:7780）
+  shanhai portal [--port N] [--host H] [--no-open]                  （山海门户：常驻本机操作台；缺省 127.0.0.1:7780；首启自动拉浏览器携 Token，--no-open 关闭）
 
 环境：SHANHAI_DATA_DIR（数据目录，默认 <repo>/data）；SHANHAI_CONFIG / config_local.json + 密钥环境变量（T3）`);
   process.exit(1);
@@ -97,6 +98,17 @@ async function runPortal(rest: string[]): Promise<void> {
   if (handle.tokenGenerated) {
     console.log(`[portal] 首次启动已自动生成门户 Token：${handle.token}`);
     console.log(`[portal] Token 已落 ${handle.tokenFile}（权限 0600；非 POSIX 平台权限位不适用）——API 请求需携带 Authorization: Bearer <token>`);
+  }
+  // TASK-96：首启自动拉起默认浏览器（Token 经 URL fragment 带外注入，前端读后即抹除；
+  // 重复启动不反复拉——marker 记录；显式 config/env Token 不拉（配置方自持口令，护测试/CI）；--no-open 逃生口）
+  if (flags.open !== false && shouldAutoOpenBrowser({ tokenGenerated: handle.tokenGenerated, tokenFile: handle.tokenFile, dataDir })) {
+    const opened = openBrowser(buildPortalUrl(handle.host, handle.port, handle.token));
+    if (opened) {
+      markBrowserOpened(dataDir);
+      console.log(`[portal] 已自动打开默认浏览器：http://${handle.host}:${handle.port}/ （Token 经 URL fragment 自动保存，无需手动复制粘贴）`);
+    } else {
+      console.warn('[portal] 自动拉起浏览器失败（无 GUI 环境可加 --no-open 跳过）——Token 见上方终端输出或 token 文件');
+    }
   }
   const shutdown = (): void => {
     console.log('[portal] 收到退出信号，关闭中……');
