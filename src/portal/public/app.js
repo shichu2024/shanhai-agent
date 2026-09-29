@@ -20,6 +20,18 @@ function refreshTokenState() {
   document.getElementById('token-state').textContent = state.token ? '已设置' : '未设置';
 }
 
+// TASK-96：消费 URL fragment 中的 Token（#token=...，由 CLI 首启自动拉起浏览器注入）——
+// 与 src/portal/browser.ts tokenFromFragment 同源镜像；fragment 不发往服务端，读取后即从地址栏抹除。
+function consumeTokenFragment() {
+  const m = /^#token=(.+)$/.exec(location.hash);
+  if (!m) return;
+  state.token = m[1];
+  sessionStorage.setItem(TOKEN_KEY, m[1]);
+  history.replaceState(null, '', location.pathname + location.search);
+  refreshTokenState();
+  document.getElementById('token-input').value = m[1];
+}
+
 async function api(path) {
   const res = await fetch(path, { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {} });
   const body = await res.json().catch(() => null);
@@ -468,6 +480,7 @@ function restartPolling() {
 }
 
 refreshTokenState();
+consumeTokenFragment();
 window.addEventListener('hashchange', () => render(location.hash));
 render(location.hash);
 restartPolling();

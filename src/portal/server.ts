@@ -82,9 +82,9 @@ export function envPortalPort(env: NodeJS.ProcessEnv = process.env): number | un
   return n;
 }
 
-/** CLI 旗标解析：shanhai portal [--port N] [--host H]；非法值 fail-fast */
-export function parsePortalArgs(args: string[]): { port?: number; host?: string } {
-  const out: { port?: number; host?: string } = {};
+/** CLI 旗标解析：shanhai portal [--port N] [--host H] [--no-open]；非法值 fail-fast（TASK-96：--no-open=首启不拉浏览器） */
+export function parsePortalArgs(args: string[]): { port?: number; host?: string; open?: boolean } {
+  const out: { port?: number; host?: string; open?: boolean } = {};
   const portIdx = args.indexOf('--port');
   if (portIdx >= 0) {
     const raw = args[portIdx + 1];
@@ -98,6 +98,7 @@ export function parsePortalArgs(args: string[]): { port?: number; host?: string 
     if (!raw || raw.length === 0) throw new Error('--host 不能为空');
     out.host = raw;
   }
+  if (args.includes('--no-open')) out.open = false;
   return out;
 }
 
