@@ -57,7 +57,8 @@ describe('TASK-96 tokenFromFragment（与 app.js consumeTokenFragment 同源镜�
     const appJs = readFileSync(path.resolve(process.cwd(), 'src', 'portal', 'public', 'app.js'), 'utf8');
     expect(appJs).toContain('consumeTokenFragment');
     expect(appJs).toContain('/^#token=(.+)$/.exec(location.hash)');
-    expect(appJs).toContain("history.replaceState(null, '', location.pathname + location.search)");
+    // 第七阶段 7-1 起产物经 esbuild 打包：引号被打印器归一为双引号（语义不变，随批迁移引号形态）
+    expect(appJs).toContain('history.replaceState(null, "", location.pathname + location.search)');
   });
 });
 

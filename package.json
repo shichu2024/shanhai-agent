@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:portal": "tsc -p tsconfig.portal-ui.json && node scripts/build-portal.mjs",
     "test": "vitest run",
     "cli": "node dist/cli.js",
     "experiment": "node dist/experiment/run.js",
@@ -22,6 +23,7 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^3.2.7",
+    "esbuild": "0.28.2",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
