@@ -1,0 +1,4 @@
+# 门户 UI 构建产物（第七阶段方案 A）：禁止 EOL 转换——入库字节 = esbuild 输出字节，
+# 产物新鲜度契约测试（tests/wp7-1-portal-freshness.test.ts）按字节逐一比对。
+src/portal/public/app.js -text
+src/portal/public/style.css -text

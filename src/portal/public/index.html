@@ -7,24 +7,33 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header>
-    <h1>山海门户</h1>
-    <nav>
-      <a href="#/tasks" data-nav="tasks">任务</a>
-      <a href="#/approvals" data-nav="approvals">审批</a>
-      <a href="#/capabilities" data-nav="capabilities">能力</a>
-      <a href="#/evolution" data-nav="evolution">演进</a>
-      <a href="#/evidence" data-nav="evidence">证据</a>
+  <!-- 页面骨架（设计 V0.3 §3.2）：固定顶栏（LOGO/三一级导航/Token 区/连接状态）+ 页头 + 内容区 + 页脚。
+       Agent 一级导航按批次计划 7-4 加入。 -->
+  <header class="app-header">
+    <div class="brand"><span class="brand__logo" aria-hidden="true">山</span><span class="brand__name">山海门户</span></div>
+    <nav class="nav" aria-label="主导航">
+      <a href="#/tasks" data-nav="tasks" class="nav-link">应龙·任务</a>
+      <a href="#/approvals" data-nav="approvals" class="nav-link">玄武·审批</a>
+      <a href="#/observe" data-nav="observe" class="nav-link">观测</a>
     </nav>
-    <form id="token-form">
-      <input id="token-input" type="password" placeholder="门户 Token（sessionStorage）" autocomplete="off" />
-      <button type="submit">保存</button>
-      <span id="token-state"></span>
-    </form>
+    <div class="header-side">
+      <form id="token-form" class="token-form">
+        <label class="visually-hidden" for="token-input" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">门户 Token</label>
+        <input id="token-input" type="password" placeholder="门户 Token（会话级存储）" autocomplete="off" />
+        <button type="submit" class="btn btn--secondary btn--sm">保存</button>
+        <span id="token-state" class="token-state"></span>
+      </form>
+      <button id="connection-indicator" class="conn conn--unknown" type="button" role="status" title="连接状态（点击立即探测）">检测中</button>
+    </div>
   </header>
   <main id="view" aria-live="polite">
-    <p>加载中……</p>
+    <p class="hint">加载中……</p>
   </main>
-  <script type="module" src="/app.js"></script>
+  <footer class="app-footer">
+    <span>版本 <span id="app-version">—</span></span>
+    <span>esbuild 单文件构建（运行期零依赖）</span>
+    <span>设计规格：docs/phase7/01-山海门户界面重设计-V0.3.md（仓库内路径）</span>
+  </footer>
+  <script src="/app.js" defer></script>
 </body>
 </html>
