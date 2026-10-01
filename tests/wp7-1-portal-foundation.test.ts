@@ -526,11 +526,12 @@ describe('7-1 components（§10.4 组件规范字符串面）', () => {
 // ---------- 骨架页（7-1 占位内容：神兽页头 + 建设中卡片 + 观测页签） ----------
 
 describe('7-1 pages.renderContent（骨架页）', () => {
-  it('观测族各页渲染页头与建设中占位（批次 7-3 交付内容）', () => {
+  it('观测族各页已由批次 7-3 交付：渲染加载态壳（随批契约迁移：7-1 占位断言收窄到 agents 族）', () => {
     for (const hash of ['#/observe', '#/observe/capabilities', '#/observe/evolution', '#/observe/evidence']) {
       const html = renderContent(parseHash(hash).route, {});
       expect(html.length).toBeGreaterThan(0);
-      expect(html).toContain('建设中');
+      expect(html).toContain('加载中');
+      expect(html).not.toContain('建设中');
       expect(PLACEHOLDER_BEASTS.test(html)).toBe(false);
     }
   });
@@ -543,12 +544,12 @@ describe('7-1 pages.renderContent（骨架页）', () => {
     }
   });
 
-  it('详情路由（7-2 已交付 / 7-3/7-4 交付）均有初始壳而非死链', () => {
-    for (const hash of ['#/tasks/t-1', '#/approvals/r-1']) {
+  it('详情路由（7-2/7-3 已交付 / 7-4 交付）均有初始壳而非死链', () => {
+    for (const hash of ['#/tasks/t-1', '#/approvals/r-1', '#/observe/evolution/c-1']) {
       const html = renderContent(parseHash(hash).route, {});
       expect(html).toContain('加载中');
     }
-    for (const hash of ['#/observe/evolution/c-1', '#/agents', '#/agents/ag-1']) {
+    for (const hash of ['#/agents', '#/agents/ag-1']) {
       const html = renderContent(parseHash(hash).route, {});
       expect(html).toContain('建设中');
     }

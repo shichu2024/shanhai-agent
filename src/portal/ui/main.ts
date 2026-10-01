@@ -22,6 +22,11 @@ import { mountTasksPage } from './tasksPage.js';
 import { mountTaskDetailPage } from './taskDetailPage.js';
 import { mountApprovalsPage } from './approvalsPage.js';
 import { mountApprovalDetailPage } from './approvalDetailPage.js';
+import { mountObserveOverviewPage } from './observeOverviewPage.js';
+import { mountObserveCapabilitiesPage } from './observeCapabilitiesPage.js';
+import { mountObserveEvolutionPage } from './observeEvolutionPage.js';
+import { mountObserveEvolutionDetailPage } from './observeEvolutionDetailPage.js';
+import { mountObserveEvidencePage } from './observeEvidencePage.js';
 
 declare const __PORTAL_APP_VERSION__: string;
 
@@ -125,6 +130,11 @@ export function boot(opts: BootOptions = {}): void {
       case 'task-detail': activePage = mountTaskDetailPage(ctx, route.id); break;
       case 'approvals': activePage = mountApprovalsPage(ctx, query); break;
       case 'approval-detail': activePage = mountApprovalDetailPage(ctx, route.id); break;
+      case 'observe': activePage = mountObserveOverviewPage(ctx); break;
+      case 'observe-capabilities': activePage = mountObserveCapabilitiesPage(ctx, query); break;
+      case 'observe-evolution': activePage = mountObserveEvolutionPage(ctx); break;
+      case 'observe-evolution-detail': activePage = mountObserveEvolutionDetailPage(ctx, route.id); break;
+      case 'observe-evidence': activePage = mountObserveEvidencePage(ctx, query); break;
       default: activePage = null; break;
     }
   }
