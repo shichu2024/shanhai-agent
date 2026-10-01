@@ -15,6 +15,7 @@ interface StubElement {
   dataset: Record<string, string>;
   listeners: Map<string, Array<(ev?: unknown) => void>>;
   addEventListener(type: string, fn: (ev?: unknown) => void): void;
+  removeEventListener(type: string, fn: (ev?: unknown) => void): void;
 }
 
 function stubElement(id: string, dataset: Record<string, string> = {}): StubElement {
@@ -22,6 +23,7 @@ function stubElement(id: string, dataset: Record<string, string> = {}): StubElem
     id, innerHTML: '', textContent: '', value: '', className: '',
     dataset: { ...dataset }, listeners: new Map(),
     addEventListener(type, fn) { el.listeners.set(type, [...(el.listeners.get(type) ?? []), fn]); },
+    removeEventListener(type, fn) { const arr = el.listeners.get(type) ?? []; el.listeners.set(type, arr.filter((f) => f !== fn)); },
   };
   return el;
 }
@@ -29,11 +31,13 @@ function stubElement(id: string, dataset: Record<string, string> = {}): StubElem
 function stubDocument() {
   const byId = new Map<string, StubElement>();
   const navEls: StubElement[] = [];
+  const docListeners = new Map<string, Array<() => void>>();
   const doc = {
     hidden: false,
     getElementById: (id: string) => byId.get(id) ?? null,
     querySelectorAll: (sel: string) => (sel.includes('data-nav') ? [...navEls] : []),
-    addEventListener: (_t: string, _f: () => void) => {},
+    addEventListener: (t: string, f: () => void) => { docListeners.set(t, [...(docListeners.get(t) ?? []), f]); },
+    removeEventListener: (t: string, f: () => void) => { const arr = docListeners.get(t) ?? []; docListeners.set(t, arr.filter((x) => x !== f)); },
   };
   function reg(id: string, dataset: Record<string, string> = {}): StubElement {
     const el = stubElement(id, dataset);
@@ -107,7 +111,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 describe('7-1 shell boot（FR-G 全局框架接线）', () => {
   beforeEach(() => { vi.stubGlobal('sessionStorage', fakeStorage()); });
 
-  it('缺省 hash 渲染任务骨架页（应龙神兽行 + 建设中），一级导航高亮 tasks', () => {
+  it('缺省 hash 渲染任务页加载壳（应龙神兽行 + 加载态，7-2 数据页由控制器挂载），一级导航高亮 tasks', () => {
     const { replace } = stubGlobals('');
     const shell = stubDocument();
     const view = shell.reg('view');
@@ -118,7 +122,7 @@ describe('7-1 shell boot（FR-G 全局框架接线）', () => {
     const conn = shell.reg('connection-indicator');
     boot({ document: shell.doc as unknown as Document, window: fakeWindow().win, timerHost: fakeTimerHost().host });
     expect(view.innerHTML).toContain('应龙');
-    expect(view.innerHTML).toContain('建设中');
+    expect(view.innerHTML).toContain('加载中');
     expect(replace).not.toHaveBeenCalled();
     expect(navTasks.className).toContain('active');
     expect(navApprovals.className).not.toContain('active');
@@ -171,7 +175,7 @@ describe('7-1 shell boot（FR-G 全局框架接线）', () => {
   });
 
   it('连接指示探针：带 Token 请求 GET /api/tasks?limit=1 携 Authorization；成功→已连接；连续 2 次网络失败→重连中（§11-3）', async () => {
-    stubGlobals('#/tasks');
+    stubGlobals('#/observe'); // 占位页（7-3 交付）无数据控制器——探针为唯一 fetch 源
     const shell = stubDocument();
     shell.reg('view');
     const conn = shell.reg('connection-indicator');
@@ -201,7 +205,7 @@ describe('7-1 shell boot（FR-G 全局框架接线）', () => {
   });
 
   it('无 Token 时探针不发请求，指示为未认证提示', async () => {
-    stubGlobals('#/tasks');
+    stubGlobals('#/observe'); // 占位页（7-3 交付）无数据控制器
     const shell = stubDocument();
     shell.reg('view');
     const conn = shell.reg('connection-indicator');
@@ -210,7 +214,8 @@ describe('7-1 shell boot（FR-G 全局框架接线）', () => {
     boot({ document: shell.doc as unknown as Document, window: fakeWindow().win, timerHost: host, fetchImpl: fetchImpl as unknown as typeof fetch });
     timers[0].fn();
     await Promise.resolve();
-    expect(fetchImpl).not.toHaveBeenCalled();
+    const probeCalls = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((c) => String(c[0]).includes('limit=1'));
+    expect(probeCalls).toHaveLength(0);
     expect(conn.textContent).toContain('Token');
   });
 

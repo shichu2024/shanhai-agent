@@ -192,14 +192,38 @@
       }
     });
   }
+  var STATUS_LABELS = {
+    created: "已创建",
+    queued: "排队中",
+    running: "运行中",
+    paused: "已暂停",
+    succeeded: "已完成",
+    failed: "失败",
+    cancelled: "已取消"
+  };
+  function statusBadgeHtml(status) {
+    const label = STATUS_LABELS[status] ?? status;
+    return `<span class="badge badge--status-${esc(status)}"><span class="badge__dot"></span>${esc(label)}</span>`;
+  }
+  function riskBadgeHtml(level) {
+    const high = level === "L3" || level === "L4";
+    return `<span class="badge badge--risk${high ? " badge--danger" : ""}">${esc(level)}</span>`;
+  }
   function emptyStateHtml(opts) {
-    const action = opts.actionLabel ? `<button type="button" class="btn btn--primary">${esc(opts.actionLabel)}</button>` : "";
+    const action = opts.actionLabel ? `<button type="button" class="btn btn--primary"${opts.actionAttrs ? ` ${opts.actionAttrs}` : ""}>${esc(opts.actionLabel)}</button>` : "";
     const hint = opts.hint ? `<p class="empty-state__hint">${esc(opts.hint)}</p>` : "";
     return `<div class="empty-state"><div class="empty-state__icon" aria-hidden="true"></div><p class="empty-state__title">${esc(opts.title)}</p>${hint}${action}</div>`;
+  }
+  function loadingStateHtml() {
+    return '<div class="loading-state" role="status">加载中……</div>';
   }
   function cardHtml(opts) {
     const actions = opts.actionsHtml ? `<div class="card__actions">${opts.actionsHtml}</div>` : "";
     return `<section class="card"><header class="card__header"><h3 class="card__title">${esc(opts.title)}</h3>${actions}</header><div class="card__body">${opts.body}</div></section>`;
+  }
+  function tableHtml(opts) {
+    const head = opts.columns.map((c) => `<th scope="col">${esc(c)}</th>`).join("");
+    return `<div class="table-wrap"><table class="table">${opts.caption ? `<caption>${esc(opts.caption)}</caption>` : ""}<thead><tr>${head}</tr></thead><tbody>${opts.rowsHtml}</tbody></table></div>`;
   }
   function pageHeaderHtml(opts) {
     const beast = beastHeaderOf(opts.view);
@@ -209,16 +233,24 @@
   }
 
   // src/portal/ui/format.ts
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+  function formatTimestamp(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  }
   function shortId(id) {
     return id.slice(0, 8);
+  }
+  function formatThousands(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
 
   // src/portal/ui/pages.ts
   var BATCH_HINTS = {
-    "tasks": "任务列表（统计卡/筛选/搜索/分页）由批次 7-2 交付",
-    "task-detail": "任务详情（头部/时间线/事件流/证据区/关联区/操作区）由批次 7-2 交付",
-    "approvals": "审批待办列表（重排/筛选/倒计时）由批次 7-2 交付",
-    "approval-detail": "审批详情（影响范围/决议操作/参数摘要区）由批次 7-2 交付",
     "observe": "总控统计卡 + 合并时间线 + 快速入口由批次 7-3 交付",
     "observe-capabilities": "白泽·能力矩阵（Agent 选择器/筛选）由批次 7-3 交付",
     "observe-evolution": "女娲·演进候选列表（状态分组/详情侧栏，整页只读）由批次 7-3 交付",
@@ -259,16 +291,20 @@
     });
     return `${pageHeaderHtml({ view, title })}${body}`;
   }
+  function loadingPage(view, opts) {
+    const title = opts?.id ? detailTitle(view, opts.id) : PAGE_TITLES[view];
+    return `${pageHeaderHtml({ view, title })}${loadingStateHtml()}`;
+  }
   function renderContent(route, query) {
     switch (route.view) {
       case "tasks":
-        return placeholderPage("tasks");
+        return loadingPage("tasks");
       case "task-detail":
-        return placeholderPage("task-detail", { id: route.id });
+        return loadingPage("task-detail", { id: route.id });
       case "approvals":
-        return placeholderPage("approvals");
+        return loadingPage("approvals");
       case "approval-detail":
-        return placeholderPage("approval-detail", { id: route.id });
+        return loadingPage("approval-detail", { id: route.id });
       case "observe":
         return `${observeTabsHtml("observe")}${placeholderPage("observe")}`;
       case "observe-capabilities":
@@ -286,6 +322,1101 @@
       case "not-found":
         return `<div class="error-state" role="alert"><p class="error-state__message">未找到视图：${esc(route.hash)}</p><a class="btn btn--primary" href="#/tasks">返回首页</a></div>`;
     }
+  }
+
+  // src/portal/ui/client.ts
+  function headers(deps, extra) {
+    const h = { ...extra };
+    const token = deps.token();
+    if (token) h.Authorization = `Bearer ${token}`;
+    return h;
+  }
+  async function toResult(res) {
+    if (!res.ok) {
+      let body = {};
+      try {
+        body = await res.json();
+      } catch {
+      }
+      return {
+        ok: false,
+        kind: "http",
+        status: res.status,
+        code: typeof body.code === "string" ? body.code : "unknown",
+        message: typeof body.message === "string" ? body.message : `HTTP ${res.status}`
+      };
+    }
+    try {
+      return { ok: true, data: await res.json() };
+    } catch {
+      return { ok: false, kind: "network" };
+    }
+  }
+  async function apiGet(path, deps) {
+    try {
+      const res = await deps.fetchImpl(path, { headers: headers(deps) });
+      return await toResult(res);
+    } catch {
+      return { ok: false, kind: "network" };
+    }
+  }
+  async function apiPost(path, body, deps) {
+    try {
+      const res = await deps.fetchImpl(path, {
+        method: "POST",
+        headers: headers(deps, { "Content-Type": "application/json" }),
+        body: JSON.stringify(body)
+      });
+      return await toResult(res);
+    } catch {
+      return { ok: false, kind: "network" };
+    }
+  }
+
+  // src/portal/ui/errors.ts
+  var UI_ERROR_TEXT = {
+    // server.ts 错误面
+    unauthorized: "Token 无效或已过期，请更新门户 Token 后重试",
+    host_forbidden: "仅供本机访问",
+    unsupported_media_type: "不应出现的 415（unsupported_media_type）——前端只用 GET/POST + JSON，出现即前端缺陷，已如实展示",
+    method_not_allowed: "不应出现的 405（method_not_allowed）——前端只用 GET/POST，出现即前端缺陷，已如实展示",
+    // api.ts 参数校验
+    bad_request: "请求参数无效",
+    invalid_task_id: "请求参数无效（taskId 白名单违规）",
+    invalid_ref: "证据 ref 格式非法",
+    invalid_bound: "趋势时间参数非法（invalid_bound）",
+    invalid_bucket: "趋势 bucket 参数非法（invalid_bucket）",
+    // errormap 结构化码
+    not_found: "对象不存在（可能已终局），刷新查看",
+    already_decided: "该审批已决议（approve/deny 竞态后到方），刷新查看",
+    task_not_paused: "任务当前状态不可续跑（已续跑或已终局）",
+    version_mismatch: "审批绑定版本与任务当前版本不一致，刷新核对",
+    timeout_applied: "请求已被惰性超时终局（denied + 任务终局），刷新查看",
+    cross_process_graceful_unsupported: "跨进程任务不支持优雅取消——请改用强制中止（force）",
+    not_implemented: "该能力为预留位，暂未实现（not_implemented）"
+  };
+  var NETWORK_ERROR_TEXT = "连接断开，操作结果未知——刷新核对后重试";
+  function explainFailure(failure) {
+    if (failure.kind === "network") return NETWORK_ERROR_TEXT;
+    const known = UI_ERROR_TEXT[failure.code];
+    if (known) return known;
+    return `${failure.code}：${failure.message}`;
+  }
+
+  // src/portal/ui/pageCtx.ts
+  function ds(dataset, kebab) {
+    const camel = kebab.replace(/-([a-z])/g, (_m, c) => c.toUpperCase());
+    return dataset[kebab] ?? dataset[camel] ?? "";
+  }
+
+  // src/portal/ui/taskFilters.ts
+  var SERVER_STATUSES = ["queued", "running", "paused", "succeeded", "failed", "cancelled"];
+  var SEVEN_STATUSES = ["created", ...SERVER_STATUSES];
+  var RANGE_OPTIONS = [
+    { key: "today", label: "今天" },
+    { key: "7d", label: "近 7 天" },
+    { key: "30d", label: "近 30 天" },
+    { key: "all", label: "全部" }
+  ];
+  var DEFAULT_RANGE = "7d";
+  var RUNNING_STALE_MS = 10 * 6e4;
+  function parseTaskFilters(query) {
+    const status = query.status ?? "";
+    const range = query.range ?? DEFAULT_RANGE;
+    return {
+      status: SEVEN_STATUSES.includes(status) ? status : null,
+      agent: query.agent && query.agent.length > 0 ? query.agent : null,
+      range: RANGE_OPTIONS.some((o) => o.key === range) ? range : DEFAULT_RANGE
+    };
+  }
+  function taskFiltersQuery(f) {
+    const parts = [];
+    if (f.status !== null) parts.push(`status=${encodeURIComponent(f.status)}`);
+    if (f.agent !== null) parts.push(`agent=${encodeURIComponent(f.agent)}`);
+    if (f.range !== DEFAULT_RANGE) parts.push(`range=${f.range}`);
+    return parts.join("&");
+  }
+  function rangeStartMs(range, now) {
+    if (range === "all") return null;
+    if (range === "today") {
+      const d = new Date(now);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+    return now - (range === "7d" ? 7 : 30) * 864e5;
+  }
+  function localTaskPass(row, filters, searchPrefix, now) {
+    if (filters.status !== null && row.status !== filters.status) return false;
+    const start = rangeStartMs(filters.range, now);
+    if (start !== null) {
+      const t = Date.parse(row.createdAt);
+      if (!Number.isNaN(t) && t < start) return false;
+    }
+    if (searchPrefix && !row.taskId.startsWith(searchPrefix)) return false;
+    return true;
+  }
+  function isRunningStale(row, now) {
+    if (row.status !== "running" || row.endedAt !== null) return false;
+    const t = Date.parse(row.createdAt);
+    if (Number.isNaN(t)) return false;
+    return now - t > RUNNING_STALE_MS;
+  }
+  function countByStatus(rows) {
+    const counts = { created: 0, queued: 0, running: 0, paused: 0, succeeded: 0, failed: 0, cancelled: 0 };
+    for (const r of rows) {
+      if (SEVEN_STATUSES.includes(r.status)) counts[r.status] += 1;
+    }
+    return counts;
+  }
+
+  // src/portal/ui/tasksView.ts
+  function feedbackHtml(feedback) {
+    if (!feedback) return "";
+    const resume = feedback.resume ? `<div class="feedback__resume"><p class="feedback__note">${esc(feedback.resume.note)}</p><pre class="code-block"><code>${esc(feedback.resume.cli)}</code></pre><button type="button" class="btn btn--ghost btn--sm" data-action="view-resume-log" data-task-id="${esc(feedback.resume.taskId)}" data-log-url="${esc(feedback.resume.logUrl)}">查看续跑日志</button><span class="hint mono">${esc(feedback.resume.logUrl)}</span><div class="resume-log"${feedback.resume.logText ? "" : " hidden"}>${feedback.resume.logText ? esc(feedback.resume.logText) : ""}</div></div>` : "";
+    return `<div class="feedback feedback--${feedback.kind}" role="${feedback.kind === "error" ? "alert" : "status"}"><p class="feedback__text">${esc(feedback.text)}</p>${resume}</div>`;
+  }
+  function statCardsHtml(counts, total, activeStatus) {
+    const cards = ["created", "queued", "running", "paused", "succeeded", "failed", "cancelled"].map((status) => {
+      const isActive = activeStatus === status;
+      const tip = status === "created" ? ' title="created 不支持服务端筛选（api.ts 白名单六枚举）——点击为前端本地过滤"' : ` title="点击筛选 ${STATUS_LABELS[status]} 任务"`;
+      return `<button type="button" class="stat-card${isActive ? " stat-card--active" : ""}${counts[status] === 0 ? " stat-card--zero" : ""}" data-action="stat" data-status="${status}"${tip}><span class="stat-card__value">${counts[status]}</span><span class="stat-card__label">${esc(STATUS_LABELS[status])}</span></button>`;
+    }).join("");
+    const totalCard = `<div class="stat-card stat-card--total"><span class="stat-card__value">${total}</span><span class="stat-card__label">合计</span></div>`;
+    return `<div class="stat-grid" aria-label="任务状态统计（基于最近 100 条聚合）">${cards}${totalCard}</div>`;
+  }
+  function filterBarHtml(filters, agentOptions, search) {
+    const statusOptions = [
+      '<option value="">全部状态</option>',
+      ...SERVER_STATUSES.map((s) => `<option value="${s}"${filters.status === s ? " selected" : ""}>${esc(STATUS_LABELS[s])}</option>`),
+      `<option value="created"${filters.status === "created" ? " selected" : ""}>${esc(STATUS_LABELS.created)}（本地过滤）</option>`
+    ].join("");
+    const agentOpts = [
+      '<option value="">全部 Agent</option>',
+      ...agentOptions.map((a) => `<option value="${esc(a)}"${filters.agent === a ? " selected" : ""}>${esc(a)}</option>`)
+    ].join("");
+    const rangeOpts = RANGE_OPTIONS.map((o) => `<option value="${o.key}"${filters.range === o.key ? " selected" : ""}>${esc(o.label)}</option>`).join("");
+    return `<div class="filter-bar">
+    <label class="filter">状态<select data-filter="status">${statusOptions}</select></label>
+    <label class="filter">Agent<select data-filter="agent">${agentOpts}</select></label>
+    <label class="filter">时间范围<select data-filter="range">${rangeOpts}</select></label>
+    <input class="filter__search" data-filter="search" type="search" placeholder="按任务 ID 前缀搜索" value="${esc(search)}" />
+    <span class="hint">时间范围为前端过滤（服务端无时间参数）</span>
+  </div>`;
+  }
+  function rowActionsHtml(row, stale) {
+    const detail = `<a class="btn btn--ghost btn--sm" href="#/tasks/${encodeURIComponent(row.taskId)}">详情</a>`;
+    if (stale) {
+      return `${detail}<button type="button" class="btn btn--danger btn--sm" data-action="crash-recovery">显式崩溃恢复</button>`;
+    }
+    const cancel = ["queued", "running", "paused"].includes(row.status) ? `<button type="button" class="btn btn--secondary btn--sm" data-action="cancel" data-task-id="${esc(row.taskId)}" data-task-status="${esc(row.status)}">取消</button>` : "";
+    const resume = row.status === "paused" ? `<button type="button" class="btn btn--primary btn--sm" data-action="resume" data-task-id="${esc(row.taskId)}">续跑</button>` : "";
+    return `${detail}${cancel}${resume}`;
+  }
+  function staleMarkHtml() {
+    return '<span class="stale-mark" title="该任务运行时间异常，可能是孤儿运行" aria-label="运行时间异常警告">⚠</span>';
+  }
+  function tasksPageHtml(m) {
+    const header = pageHeaderHtml({ view: "tasks", title: "任务列表" });
+    const stats = statCardsHtml(m.stats, m.total, m.filters.status);
+    const filters = filterBarHtml(m.filters, m.agentOptions, m.search);
+    let body;
+    if (m.rows.length === 0) {
+      const hasFilter = m.filters.status !== null || m.filters.agent !== null || m.filters.range !== "all" || m.search.length > 0;
+      body = cardHtml({
+        title: "任务列表",
+        body: emptyStateHtml({
+          title: "当前筛选无任务",
+          hint: hasFilter ? "调整或清除筛选条件后再试" : "尚无任务记录",
+          actionLabel: hasFilter ? "清除筛选" : void 0,
+          actionAttrs: hasFilter ? 'data-action="clear-filters"' : void 0
+        })
+      });
+    } else {
+      const rowsHtml = m.rows.map((row) => {
+        const stale = m.runningStaleIds.includes(row.taskId);
+        return `<tr>
+        <td><a class="mono" href="#/tasks/${encodeURIComponent(row.taskId)}" title="${esc(row.taskId)}">${esc(shortId(row.taskId))}</a></td>
+        <td>${esc(row.agentId)}</td>
+        <td>${statusBadgeHtml(row.status)}${stale ? staleMarkHtml() : ""}</td>
+        <td>${row.attemptCount}</td>
+        <td>${row.modelCallCount}</td>
+        <td>${formatThousands(row.tokensUsed)}</td>
+        <td>${esc(formatTimestamp(row.createdAt))}</td>
+        <td class="row-actions">${rowActionsHtml(row, stale)}</td>
+      </tr>`;
+      }).join("");
+      body = cardHtml({
+        title: `任务列表（第 ${m.page + 1} 页 / 共 ${m.total} 条）`,
+        body: tableHtml({
+          columns: ["任务", "Agent", "状态", "尝试", "模型调用", "Token", "创建时间", "操作"],
+          rowsHtml
+        }),
+        actionsHtml: pagerHtml(m.page, m.pageCount)
+      });
+    }
+    const notice = m.runningStaleIds.length > 0 ? `<p class="warning">检测到 ${m.runningStaleIds.length} 个滞留运行任务——若确认其执行进程已不存在，可执行显式崩溃恢复（全局操作，将把所有 Running 任务标记为 Failed(CrashRecovery)）。</p>` : "";
+    return `${header}${feedbackHtml(m.feedback)}${stats}${filters}${notice}${body}`;
+  }
+  function pagerHtml(page, pageCount) {
+    if (pageCount <= 1) return "";
+    return `<div class="pager">
+    <button type="button" class="btn btn--secondary btn--sm" data-action="page-prev"${page <= 0 ? " disabled" : ""}>上一页</button>
+    <span class="pager__label">第 ${page + 1} / ${pageCount} 页</span>
+    <button type="button" class="btn btn--secondary btn--sm" data-action="page-next"${page >= pageCount - 1 ? " disabled" : ""}>下一页</button>
+  </div>`;
+  }
+
+  // src/portal/view/write.ts
+  function cancelModeFor(taskStatus) {
+    if (taskStatus === "running") {
+      return {
+        gracefulDisabled: true,
+        defaultMode: "force",
+        hint: "该任务运行于独立进程，仅支持强制中止（下一个原子调用边界生效，模型调用不打断；graceful 仅执行进程内可见）"
+      };
+    }
+    return { gracefulDisabled: false, defaultMode: "graceful", hint: "queued/paused 立即取消（既有 CAS 语义）；paused 取消将连带 pending 审批作废" };
+  }
+  function confirmCrashRecoveryText(runningCount) {
+    return `将把所有 Running 任务（当前 ${runningCount} 个）标记为 Failed(CrashRecovery)，并执行孤儿快照清理、pending 审批作废与 trace 索引对账。请先确认这些任务的执行进程确实已不存在——正在执行的任务会被误杀且不可恢复。确认继续？`;
+  }
+  function approveActionHint(decision, taskStatus) {
+    if (decision === "pending" && taskStatus === "paused") {
+      return { decidable: true, hint: "approve 只写决议（任务保持挂起）；deny 为任务级终局（cancelled/approval_denied）" };
+    }
+    if (decision === "approved" && taskStatus === "paused") {
+      return { decidable: false, hint: "已批准，待续跑——点击「续跑」以独立进程执行（resumedBy=manual-resume）" };
+    }
+    if (decision === "pending") {
+      return { decidable: false, hint: `任务状态 ${taskStatus} 非挂起——审批不可决议（可能已被惰性超时终局，刷新查看）` };
+    }
+    return { decidable: false, hint: "该请求已终局（只读）" };
+  }
+  function resumeNote(result) {
+    if (!result.spawned) return "续跑子进程未启动";
+    const name = result.logFile.split(/[\\/]/).pop() ?? result.logFile;
+    return `已 spawn 续跑子进程（resumedBy=manual-resume；日志 ${name}）——状态以任务页为准，子进程 CAS 失败时日志留因`;
+  }
+
+  // src/portal/ui/writeFlow.ts
+  function cancelOp(taskId, taskStatus) {
+    const mode = cancelModeFor(taskStatus);
+    return {
+      kind: "cancel",
+      path: `/api/tasks/${encodeURIComponent(taskId)}/cancel`,
+      body: { mode: mode.defaultMode },
+      confirmText: mode.hint
+    };
+  }
+  function resumeOp(taskId) {
+    return { kind: "resume", path: `/api/tasks/${encodeURIComponent(taskId)}/resume`, body: {} };
+  }
+  function crashRecoveryOp(runningCount) {
+    return { kind: "crash-recovery", path: "/api/portal/crash-recovery", body: {}, confirmText: confirmCrashRecoveryText(runningCount) };
+  }
+  function approveOp(requestId) {
+    return { kind: "approve", path: `/api/approvals/${encodeURIComponent(requestId)}/approve`, body: {} };
+  }
+  function denyOp(requestId) {
+    return { kind: "deny", path: `/api/approvals/${encodeURIComponent(requestId)}/deny`, body: {} };
+  }
+  async function runWrite(op, deps) {
+    if (op.confirmText !== void 0 && !deps.confirmBox(op.confirmText)) {
+      return { ok: false, kind: "cancelled-by-user" };
+    }
+    let result;
+    try {
+      result = await deps.post(op.path, op.body ?? {});
+    } catch {
+      return { ok: false, kind: "network" };
+    }
+    if (result.ok) return { ok: true, kind: "success", data: result.data };
+    if (result.kind === "network") return { ok: false, kind: "network" };
+    return { ok: false, kind: "failure", status: result.status, code: result.code, message: result.message };
+  }
+  function createWriteGate() {
+    let inFlight = false;
+    return {
+      acquire() {
+        if (inFlight) return false;
+        inFlight = true;
+        return true;
+      },
+      release() {
+        inFlight = false;
+      }
+    };
+  }
+  function resumeFeedback(result, taskId) {
+    return {
+      note: resumeNote(result),
+      cli: `shanhai task run ${taskId} --resume --resumed-by manual-resume`,
+      logUrl: `/api/tasks/${encodeURIComponent(taskId)}/resume-log`
+    };
+  }
+
+  // src/portal/ui/tasksPage.ts
+  var PAGE_SIZE = 20;
+  var POLL_INTERVAL_MS = 5e3;
+  var STATS_LIMIT = 100;
+  function isListRow(row) {
+    return typeof row === "object" && row !== null && typeof row.taskId === "string";
+  }
+  function asRows(data) {
+    if (Array.isArray(data)) return data.filter(isListRow);
+    const tasks = data.tasks;
+    return Array.isArray(tasks) ? tasks.filter(isListRow) : [];
+  }
+  function mountTasksPage(ctx, query) {
+    let filters = parseTaskFilters(query);
+    let search = "";
+    let page = 0;
+    let stats = countByStatus([]);
+    let statsTotal = 0;
+    let rows = [];
+    let total = 0;
+    let feedback = null;
+    let authFailed = false;
+    const gate = createWriteGate();
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    function listUrl() {
+      const params = [];
+      if (filters.status !== null && SERVER_STATUSES.includes(filters.status)) params.push(`status=${filters.status}`);
+      if (filters.agent !== null) params.push(`agentId=${encodeURIComponent(filters.agent)}`);
+      params.push(`limit=${PAGE_SIZE}`, `offset=${page * PAGE_SIZE}`);
+      return `/api/tasks?${params.join("&")}`;
+    }
+    function visibleRows(now) {
+      return rows.filter((row) => localTaskPass(row, filters, search, now));
+    }
+    function render() {
+      const now = ctx.now();
+      const shown = visibleRows(now);
+      const runningStaleIds = rows.filter((row) => isRunningStale(row, now)).map((row) => row.taskId);
+      const agentOptions = [...new Set(rows.map((r) => r.agentId))].sort();
+      ctx.view.innerHTML = tasksPageHtml({
+        stats,
+        total: total > 0 ? total : statsTotal,
+        rows: shown,
+        runningStaleIds,
+        page,
+        pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+        filters,
+        agentOptions,
+        search,
+        feedback,
+        now
+      });
+    }
+    function renderAuthFailed() {
+      ctx.view.innerHTML = `<header class="page-header"><div class="beast-row"><span class="beast-row__icon" aria-hidden="true">应</span><span class="beast-row__name">应龙·任务工作台</span><span class="beast-row__tagline">任务执行域：调度、运行与状态机</span></div><h2 class="page-header__title">任务列表</h2></header>
+      <div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>`;
+    }
+    async function refresh() {
+      if (authFailed) return;
+      const [statsRes, listRes] = await Promise.all([
+        apiGet(`/api/tasks?limit=${STATS_LIMIT}`, deps),
+        apiGet(listUrl(), deps)
+      ]);
+      if (statsRes.ok === false && statsRes.kind === "http" && statsRes.status === 401 || listRes.ok === false && listRes.kind === "http" && listRes.status === 401) {
+        authFailed = true;
+        poller.stop();
+        renderAuthFailed();
+        return;
+      }
+      if (statsRes.ok) {
+        const statsRows = asRows(statsRes.data);
+        stats = countByStatus(statsRows);
+        statsTotal = statsRows.length;
+      }
+      if (listRes.ok) {
+        const body = listRes.data;
+        rows = asRows(body);
+        total = typeof body.total === "number" ? body.total : rows.length;
+      }
+      if (!statsRes.ok && !listRes.ok) {
+      }
+      render();
+    }
+    const poller = createPoller({ intervalMs: POLL_INTERVAL_MS, fn: refresh, timerHost: ctx.timerHost });
+    function navigate(next) {
+      filters = { ...next };
+      page = 0;
+      const q = taskFiltersQuery(next);
+      location.hash = `#/tasks${q ? `?${q}` : ""}`;
+    }
+    async function refreshResumeLog(taskId) {
+      const res = await apiGet(`/api/tasks/${encodeURIComponent(taskId)}/resume-log`, deps);
+      const text = res.ok ? `续跑日志（${res.data.logFile ?? ""}）：
+${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……（已截断）" : ""}` : `续跑日志读取失败：${explainFailure({ ok: false, kind: "network" })}`;
+      if (feedback?.resume) {
+        feedback = { ...feedback, resume: { ...feedback.resume, logText: text } };
+        render();
+      }
+    }
+    async function handleWrite(kind, dataset) {
+      if (!gate.acquire()) return;
+      try {
+        let op;
+        if (kind === "cancel") op = cancelOp(ds(dataset, "task-id"), ds(dataset, "task-status"));
+        else if (kind === "resume") op = resumeOp(ds(dataset, "task-id"));
+        else if (kind === "crash-recovery") {
+          const rc = Number(ds(dataset, "running-count"));
+          op = crashRecoveryOp(Number.isFinite(rc) && ds(dataset, "running-count") !== "" ? rc : stats.running);
+        } else return;
+        const outcome = await runWrite(op, { confirmBox: ctx.confirmBox, post: (path, body) => apiPost(path, body, deps) });
+        if (outcome.kind === "cancelled-by-user") return;
+        if (outcome.ok) {
+          const data = outcome.data;
+          if (kind === "resume" && typeof data.taskId === "string") {
+            const rf = resumeFeedback({ taskId: data.taskId, spawned: data.spawned === true, logFile: data.logFile ?? "" }, data.taskId);
+            feedback = { kind: "success", text: "续跑请求已受理", resume: { ...rf, taskId: data.taskId } };
+          } else if (kind === "crash-recovery") {
+            feedback = { kind: "success", text: "崩溃恢复已执行（Running→Failed(CrashRecovery)、孤儿快照清理、pending 审批作废、trace 对账）" };
+          } else {
+            feedback = { kind: "success", text: `取消成功（mode=${data.mode ?? "—"}）` };
+          }
+        } else if (outcome.kind === "network") {
+          feedback = { kind: "error", text: explainFailure({ ok: false, kind: "network" }) };
+        } else {
+          feedback = { kind: "error", text: `${explainFailure({ ok: false, kind: "http", status: outcome.status, code: outcome.code, message: outcome.message })}（${outcome.code}：${outcome.message}）` };
+        }
+        render();
+        await refresh();
+      } finally {
+        gate.release();
+      }
+    }
+    function onClick(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-action]");
+      if (!hit) return;
+      const action = hit.dataset.action;
+      if (action === "stat") {
+        const status = hit.dataset.status ?? "";
+        navigate({ ...filters, status: filters.status === status ? null : status });
+        return;
+      }
+      if (action === "clear-filters") {
+        navigate({ status: null, agent: null, range: DEFAULT_RANGE });
+        return;
+      }
+      if (action === "page-prev" && page > 0) {
+        page -= 1;
+        void refresh();
+        return;
+      }
+      if (action === "page-next" && page < Math.ceil(total / PAGE_SIZE) - 1) {
+        page += 1;
+        void refresh();
+        return;
+      }
+      if (action === "view-resume-log") {
+        void refreshResumeLog(ds(hit.dataset, "task-id"));
+        return;
+      }
+      if (action === "cancel" || action === "resume" || action === "crash-recovery") {
+        void handleWrite(action, hit.dataset);
+      }
+    }
+    function onChange(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-filter]");
+      if (!hit) return;
+      const key = hit.dataset.filter;
+      const value = target?.value ?? "";
+      if (key === "status") navigate({ ...filters, status: value.length > 0 ? value : null });
+      else if (key === "agent") navigate({ ...filters, agent: value.length > 0 ? value : null });
+      else if (key === "range") navigate({ ...filters, range: value || "7d" });
+    }
+    function onInput(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-filter]");
+      if (!hit || hit.dataset.filter !== "search") return;
+      search = target?.value ?? "";
+      render();
+    }
+    function onVisibility(ev) {
+      const t = ev?.target;
+      const hidden = typeof t?.hidden === "boolean" ? t.hidden : ctx.doc.hidden;
+      poller.onVisibility(!hidden);
+    }
+    ctx.view.addEventListener("click", onClick);
+    ctx.view.addEventListener("change", onChange);
+    ctx.view.addEventListener("input", onInput);
+    ctx.doc.addEventListener("visibilitychange", onVisibility);
+    void refresh();
+    poller.start();
+    return {
+      destroy() {
+        ctx.view.removeEventListener("click", onClick);
+        ctx.view.removeEventListener("change", onChange);
+        ctx.view.removeEventListener("input", onInput);
+        ctx.doc.removeEventListener("visibilitychange", onVisibility);
+        poller.stop();
+      }
+    };
+  }
+
+  // src/portal/ui/taskDetailView.ts
+  var INPUT_COLLAPSE_LINES = 50;
+  function collapseInput(input) {
+    const lines = input.split("\n");
+    if (lines.length <= INPUT_COLLAPSE_LINES) return { collapsed: false, head: input, full: input };
+    return { collapsed: true, head: lines.slice(0, INPUT_COLLAPSE_LINES).join("\n"), full: input };
+  }
+  function headCardHtml(task) {
+    const ended = task.endedAt ? esc(formatTimestamp(task.endedAt)) : "—";
+    const cancel = task.status === "cancelled" && task.cancelReason ? `<div class="kv"><dt>取消原因</dt><dd>${esc(task.cancelReason)}</dd></div>` : "";
+    return cardHtml({
+      title: "任务信息",
+      body: `<div class="detail-head">
+      <div class="detail-head__id"><code class="mono">${esc(task.taskId)}</code><button type="button" class="btn btn--ghost btn--sm" data-action="copy-id" data-id="${esc(task.taskId)}">复制</button>${statusBadgeHtml(task.status)}</div>
+      <dl class="kv-grid">
+        <div class="kv"><dt>Agent</dt><dd>${esc(task.agentId)}</dd></div>
+        <div class="kv"><dt>版本</dt><dd class="mono">${esc(task.agentVersionId)}</dd></div>
+        <div class="kv"><dt>创建时间</dt><dd>${esc(formatTimestamp(task.createdAt))}</dd></div>
+        <div class="kv"><dt>结束时间</dt><dd>${ended}</dd></div>
+        <div class="kv"><dt>尝试次数</dt><dd>${task.attemptCount}</dd></div>
+        <div class="kv"><dt>模型调用</dt><dd>${task.modelCallCount}</dd></div>
+        <div class="kv"><dt>Token 用量</dt><dd>${formatThousands(task.tokensUsed)}</dd></div>
+        ${cancel}
+      </dl>
+    </div>`
+    });
+  }
+  function timelineHtml(task) {
+    const end = task.endedAt ? esc(formatTimestamp(task.endedAt)) : "进行中";
+    return cardHtml({
+      title: "时间线",
+      body: `<ol class="timeline">
+      <li class="timeline__item"><span class="timeline__dot" aria-hidden="true"></span><span class="timeline__label">创建</span><span class="timeline__time">${esc(formatTimestamp(task.createdAt))}</span></li>
+      <li class="timeline__item"><span class="timeline__dot" aria-hidden="true"></span><span class="timeline__label">结束</span><span class="timeline__time">${end}</span></li>
+    </ol>`
+    });
+  }
+  function inputHtml(task) {
+    let pretty = task.input;
+    try {
+      pretty = JSON.stringify(JSON.parse(task.input), null, 2);
+    } catch {
+    }
+    const collapsed = collapseInput(pretty);
+    const body = collapsed.collapsed ? `<pre class="code-block code-block--collapsed"><code>${esc(collapsed.head)}</code></pre><button type="button" class="btn btn--ghost btn--sm" data-action="expand-input">展开全部</button><pre class="code-block" hidden><code>${esc(collapsed.full)}</code></pre>` : `<pre class="code-block"><code>${esc(pretty)}</code></pre>`;
+    return cardHtml({ title: "输入", body });
+  }
+  function eventsHtml(events, excluded) {
+    if (events.length === 0) {
+      return cardHtml({ title: "事件流", body: emptyStateHtml({ title: "暂无事件" }) });
+    }
+    const types = [...new Set(events.map((e) => e.eventType))];
+    const checks = types.map((t) => `<label class="check"><input type="checkbox" data-event-type="${esc(t)}"${excluded.has(t) ? "" : " checked"} /> ${esc(t)}</label>`).join("");
+    const rows = events.filter((e) => !excluded.has(e.eventType)).map((e) => `<tr>
+    <td class="mono">${esc(shortId(e.eventId))}</td>
+    <td>${esc(e.eventType)}</td>
+    <td>${esc(formatTimestamp(e.timestamp))}</td>
+    <td>${e.callKind ? `调用 ${e.callNo ?? "—"} · ${esc(e.callKind)}` : "—"}</td>
+    <td>${e.attemptNo ?? "—"}</td>
+  </tr>`).join("");
+    return cardHtml({
+      title: "事件流",
+      body: `<div class="event-filter">${checks}</div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>事件</th><th>类型</th><th>时间</th><th>调用面</th><th>尝试</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    });
+  }
+  function evidenceHtml(evidence) {
+    if (evidence.length === 0) {
+      return cardHtml({ title: "证据", body: emptyStateHtml({ title: "本任务未登记证据引用" }) });
+    }
+    const rows = evidence.map((e) => `<tr>
+    <td><a class="mono" href="#/observe/evidence?ref=${encodeURIComponent(e.ref)}">${esc(e.ref)}</a></td>
+    <td>${esc(e.kind)}</td>
+  </tr>`).join("");
+    return cardHtml({ title: "证据", body: `<div class="table-wrap"><table class="table"><thead><tr><th>引用</th><th>类型</th></tr></thead><tbody>${rows}</tbody></table></div>` });
+  }
+  function relatedHtml(task, children) {
+    const hasParent = task.parentTaskId !== null && task.parentTaskId.length > 0;
+    if (!hasParent && children.length === 0) {
+      return cardHtml({ title: "关联任务", body: emptyStateHtml({ title: "无关联任务" }) });
+    }
+    const parent = hasParent ? `<div class="kv"><dt>父任务</dt><dd><a class="mono" href="#/tasks/${encodeURIComponent(task.parentTaskId)}">${esc(shortId(task.parentTaskId))}</a></dd></div>` : "";
+    const childRows = children.map((c) => `<tr>
+    <td><a class="mono" href="#/tasks/${encodeURIComponent(c.taskId)}">${esc(shortId(c.taskId))}</a></td>
+    <td>${statusBadgeHtml(c.status)}</td>
+  </tr>`).join("");
+    const childTable = children.length > 0 ? `<div class="table-wrap"><table class="table"><caption>子任务（${children.length}，基于最近 100 条前端聚合）</caption><thead><tr><th>任务</th><th>状态</th></tr></thead><tbody>${childRows}</tbody></table></div>` : "";
+    return cardHtml({ title: "关联任务", body: `<dl class="kv-grid">${parent}</dl>${childTable}` });
+  }
+  function actionsHtml(task, stale, now) {
+    const cancel = ["queued", "running", "paused"].includes(task.status) ? `<button type="button" class="btn btn--secondary" data-action="cancel" data-task-id="${esc(task.taskId)}" data-task-status="${esc(task.status)}">取消</button>` : "";
+    const resume = task.status === "paused" ? `<button type="button" class="btn btn--primary" data-action="resume" data-task-id="${esc(task.taskId)}">续跑</button>` : "";
+    const crash = stale || isRunningStale(task, now) ? `<button type="button" class="btn btn--danger" data-action="crash-recovery">显式崩溃恢复</button>` : "";
+    const body = cancel || resume || crash ? `<div class="detail-actions">${cancel}${resume}${crash}</div>` : emptyStateHtml({ title: "当前状态无可用操作" });
+    return cardHtml({ title: "操作", body });
+  }
+  function taskDetailHtml(m) {
+    const title = `任务详情（${shortId(m.task.taskId)}）`;
+    const header = pageHeaderHtml({ view: "task-detail", title });
+    const stale = isRunningStale(m.task, m.now);
+    const staleNotice = stale ? '<p class="warning">该任务运行时间异常，可能是孤儿运行——出口为显式崩溃恢复（全局操作），不提供取消以防误杀仍在执行的进程。</p>' : "";
+    return `${header}${feedbackHtml(m.feedback)}${headCardHtml(m.task)}${timelineHtml(m.task)}${staleNotice}${inputHtml(m.task)}${eventsHtml(m.events, m.excludedEventTypes ?? /* @__PURE__ */ new Set())}${evidenceHtml(m.evidence)}${relatedHtml(m.task, m.children)}${actionsHtml(m.task, stale, m.now)}`;
+  }
+
+  // src/portal/ui/taskDetailPage.ts
+  var POLL_INTERVAL_MS2 = 3e3;
+  var CHILDREN_SCAN_LIMIT = 100;
+  var TERMINAL_STATUSES = /* @__PURE__ */ new Set(["succeeded", "failed", "cancelled"]);
+  function asObject(data) {
+    return typeof data === "object" && data !== null ? data : {};
+  }
+  function mountTaskDetailPage(ctx, taskId) {
+    let task = null;
+    let events = [];
+    let evidence = [];
+    let children = [];
+    let feedback = null;
+    let authFailed = false;
+    let excludedEventTypes = /* @__PURE__ */ new Set();
+    let runningCount = 0;
+    const gate = createWriteGate();
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    function render() {
+      if (!task) {
+        ctx.view.innerHTML = '<div class="loading-state" role="status">加载中……</div>';
+        return;
+      }
+      ctx.view.innerHTML = taskDetailHtml({ task, events, evidence, children, feedback, excludedEventTypes, now: ctx.now() });
+    }
+    async function refresh() {
+      if (authFailed || task !== null && TERMINAL_STATUSES.has(task.status)) return;
+      const base = `/api/tasks/${encodeURIComponent(taskId)}`;
+      const [taskRes, eventsRes, evidenceRes, childrenRes] = await Promise.all([
+        apiGet(base, deps),
+        apiGet(`${base}/events`, deps),
+        apiGet(`${base}/evidence`, deps),
+        apiGet(`/api/tasks?limit=${CHILDREN_SCAN_LIMIT}`, deps)
+      ]);
+      if (!taskRes.ok && taskRes.kind === "http" && taskRes.status === 401) {
+        authFailed = true;
+        poller.stop();
+        ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+        return;
+      }
+      if (!taskRes.ok && taskRes.kind === "http" && taskRes.status === 404) {
+        poller.stop();
+        ctx.view.innerHTML = `<div class="error-state" role="alert"><span class="error-state__code">not_found</span><p class="error-state__message">任务不存在：${taskId}</p><a class="btn btn--secondary" href="#/tasks">返回任务列表</a></div>`;
+        return;
+      }
+      if (taskRes.ok) task = asObject(taskRes.data);
+      if (eventsRes.ok) events = Array.isArray(eventsRes.data) ? eventsRes.data : [];
+      if (evidenceRes.ok) {
+        const refs = evidenceRes.data.refs;
+        evidence = Array.isArray(refs) ? refs : [];
+      }
+      if (childrenRes.ok) {
+        const tasks = Array.isArray(childrenRes.data.tasks) ? childrenRes.data.tasks : [];
+        runningCount = tasks.filter((r) => r.status === "running").length;
+        children = tasks.filter((r) => r.parentTaskId === taskId).map((r) => ({ taskId: String(r.taskId), status: String(r.status) }));
+      }
+      render();
+      if (task !== null && TERMINAL_STATUSES.has(task.status)) poller.stop();
+    }
+    const poller = createPoller({ intervalMs: POLL_INTERVAL_MS2, fn: refresh, timerHost: ctx.timerHost });
+    async function refreshResumeLog() {
+      if (!feedback?.resume) return;
+      const res = await apiGet(feedback.resume.logUrl, deps);
+      const text = res.ok ? String(res.data.content ?? "").slice(0, 4e3) : `续跑日志读取失败：${res.ok ? "" : explainFailure(res)}`;
+      feedback = { ...feedback, resume: { ...feedback.resume, logText: text } };
+      render();
+    }
+    async function handleWrite(kind, dataset) {
+      if (!gate.acquire()) return;
+      try {
+        let op;
+        if (kind === "cancel") op = cancelOp(ds(dataset, "task-id") || taskId, ds(dataset, "task-status") || task?.status || "");
+        else if (kind === "resume") op = resumeOp(ds(dataset, "task-id") || taskId);
+        else if (kind === "crash-recovery") op = crashRecoveryOp(runningCount);
+        else return;
+        const outcome = await runWrite(op, { confirmBox: ctx.confirmBox, post: (path, body) => apiPost(path, body, deps) });
+        if (outcome.kind === "cancelled-by-user") return;
+        if (outcome.ok) {
+          const data = outcome.data;
+          if (kind === "resume" && typeof data.taskId === "string") {
+            const rf = resumeFeedback({ taskId: data.taskId, spawned: data.spawned === true, logFile: data.logFile ?? "" }, data.taskId);
+            feedback = { kind: "success", text: "续跑请求已受理", resume: { ...rf, taskId: data.taskId } };
+          } else if (kind === "crash-recovery") {
+            feedback = { kind: "success", text: "崩溃恢复已执行（Running→Failed(CrashRecovery)、孤儿快照清理、pending 审批作废、trace 对账）" };
+          } else {
+            feedback = { kind: "success", text: `取消成功（mode=${data.mode ?? "—"}）` };
+          }
+        } else if (outcome.kind === "network") {
+          feedback = { kind: "error", text: explainFailure({ ok: false, kind: "network" }) };
+        } else {
+          feedback = { kind: "error", text: explainFailure({ ok: false, kind: "http", status: outcome.status, code: outcome.code, message: outcome.message }) };
+        }
+        render();
+        await refresh();
+      } finally {
+        gate.release();
+      }
+    }
+    function onClick(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-action]");
+      if (!hit) return;
+      const action = hit.dataset.action;
+      if (action === "copy-id") {
+        const id = hit.dataset.id ?? "";
+        void navigator.clipboard?.writeText?.(id).catch(() => void 0);
+        return;
+      }
+      if (action === "view-resume-log") {
+        void refreshResumeLog();
+        return;
+      }
+      if (action === "expand-input") {
+        const hidden = ctx.view.querySelector(".code-block:not(.code-block--collapsed)");
+        if (hidden) hidden.removeAttribute("hidden");
+        const collapsed = ctx.view.querySelector(".code-block--collapsed");
+        if (collapsed) collapsed.setAttribute("hidden", "");
+        const btn = ev.target;
+        if (typeof btn.setAttribute === "function") btn.setAttribute("hidden", "");
+        return;
+      }
+      if (action === "cancel" || action === "resume" || action === "crash-recovery") {
+        void handleWrite(action, hit.dataset);
+      }
+    }
+    function onChange(ev) {
+      const target = ev.target;
+      const type = target?.dataset ? ds(target.dataset, "event-type") : "";
+      if (!type) return;
+      const next = new Set(excludedEventTypes);
+      if (target?.checked === false) next.add(type);
+      else next.delete(type);
+      excludedEventTypes = next;
+      render();
+    }
+    function onVisibility(ev) {
+      const t = ev?.target;
+      const hidden = typeof t?.hidden === "boolean" ? t.hidden : ctx.doc.hidden;
+      poller.onVisibility(!hidden);
+    }
+    ctx.view.addEventListener("click", onClick);
+    ctx.view.addEventListener("change", onChange);
+    ctx.doc.addEventListener("visibilitychange", onVisibility);
+    render();
+    void refresh();
+    poller.start();
+    return {
+      destroy() {
+        ctx.view.removeEventListener("click", onClick);
+        ctx.view.removeEventListener("change", onChange);
+        ctx.doc.removeEventListener("visibilitychange", onVisibility);
+        poller.stop();
+      }
+    };
+  }
+
+  // src/portal/ui/approvalsView.ts
+  var APPROVAL_DECISION_LABELS = {
+    pending: "待决议",
+    approved: "已批准",
+    denied: "已否决",
+    superseded: "已作废"
+  };
+  var DECISION_KEYS = ["pending", "approved", "denied", "superseded"];
+  function decisionBadgeHtml(decision) {
+    const label = APPROVAL_DECISION_LABELS[decision] ?? decision;
+    return `<span class="badge badge--decision-${esc(decision)}"><span class="badge__dot"></span>${esc(label)}</span>`;
+  }
+  function pendingViewRows(rows) {
+    return rows.filter((r) => r.decision === "pending").sort((a, b) => Date.parse(a.requestedAt) - Date.parse(b.requestedAt));
+  }
+  function allViewRows(rows) {
+    return [...rows];
+  }
+  var COUNTDOWN_CRITICAL_MS = 5 * 6e4;
+  function countdownLabel(remainingMs) {
+    if (remainingMs <= 0) return "已超时";
+    if (remainingMs < 6e4) return "<1 分钟";
+    return `${Math.ceil(remainingMs / 6e4)} 分钟内`;
+  }
+  function isCountdownCritical(remainingMs) {
+    return remainingMs > 0 && remainingMs < COUNTDOWN_CRITICAL_MS;
+  }
+  function detailCountdownMs(timeoutAt, now) {
+    const t = Date.parse(timeoutAt);
+    if (Number.isNaN(t)) return 0;
+    return Math.max(0, t - now);
+  }
+  function countdownHtml(row) {
+    if (row.decision !== "pending") return '<span class="hint">—</span>';
+    const cls = isCountdownCritical(row.timeoutRemainingMs) ? " countdown countdown--critical" : " countdown";
+    return `<span class="${cls.trim()}">${esc(countdownLabel(row.timeoutRemainingMs))}</span>`;
+  }
+  function approvalsPageHtml(m) {
+    const header = pageHeaderHtml({ view: "approvals", title: "待办审批" });
+    const tabs = `<div class="filter-bar">
+    <button type="button" class="btn ${m.mode === "pending" ? "btn--primary" : "btn--secondary"} btn--sm" data-action="view-pending">待办（pending=true）</button>
+    <button type="button" class="btn ${m.mode === "all" ? "btn--primary" : "btn--secondary"} btn--sm" data-action="view-all">全部决议</button>
+    ${m.mode === "all" ? `<label class="filter">决议<select data-filter="decision"><option value="">全部</option>${DECISION_KEYS.map((k) => `<option value="${k}"${m.decisionFilter === k ? " selected" : ""}>${esc(APPROVAL_DECISION_LABELS[k])}</option>`).join("")}</select></label>` : ""}
+    <span class="hint">待办视图按等待最久置顶（超时风险优先，前端重排）</span>
+  </div>`;
+    let body;
+    if (m.rows.length === 0) {
+      body = cardHtml({ title: "审批列表", body: emptyStateHtml({ title: m.mode === "pending" ? "暂无待办审批" : "当前筛选无审批" }) });
+    } else {
+      const rowsHtml = m.rows.map((row) => `<tr>
+      <td><a class="mono" href="#/approvals/${encodeURIComponent(row.requestId)}" title="${esc(row.requestId)}">${esc(shortId(row.requestId))}</a></td>
+      <td><a class="mono" href="#/tasks/${encodeURIComponent(row.taskId)}" title="${esc(row.taskId)}">${esc(shortId(row.taskId))}</a>${statusBadgeHtml(row.taskStatus)}</td>
+      <td class="mono">${esc(row.toolId)}</td>
+      <td>${decisionBadgeHtml(row.decision)}</td>
+      <td>${esc(formatTimestamp(row.requestedAt))}</td>
+      <td>${countdownHtml(row)}</td>
+    </tr>`).join("");
+      body = cardHtml({
+        title: `审批列表（第 ${m.page + 1} 页 / 共 ${m.pageCount} 页）`,
+        body: tableHtml({
+          columns: ["审批 ID", "任务", "工具", "决议", "请求时间", "超时倒计时"],
+          rowsHtml
+        }),
+        actionsHtml: pagerHtml(m.page, m.pageCount)
+      });
+    }
+    return `${header}${feedbackHtml(m.feedback)}${tabs}${body}`;
+  }
+  function decidedSectionHtml(req) {
+    if (req.decision === "pending") return '<p class="hint">尚未决议</p>';
+    return `<dl class="kv-grid">
+    <div class="kv"><dt>决议</dt><dd>${decisionBadgeHtml(req.decision)}</dd></div>
+    <div class="kv"><dt>决议时间</dt><dd>${esc(formatTimestamp(req.decidedAt))}</dd></div>
+  </dl>`;
+  }
+  function approvalDetailHtml(m) {
+    const { request: req } = m.detail;
+    const header = pageHeaderHtml({ view: "approval-detail", title: `审批详情（${shortId(req.requestId)}）` });
+    const hint = approveActionHint(req.decision, m.taskStatus ?? "unknown");
+    const taskBadge = m.taskStatus ? statusBadgeHtml(m.taskStatus) : '<span class="hint">—</span>';
+    const countdownMs = detailCountdownMs(req.timeoutAt, m.now);
+    const countdown = req.decision === "pending" ? `<span class="${isCountdownCritical(countdownMs) ? "countdown countdown--critical" : "countdown"}">${esc(countdownLabel(countdownMs))}</span>` : '<span class="hint">—</span>';
+    const head = cardHtml({
+      title: "审批信息",
+      body: `<dl class="kv-grid">
+      <div class="kv"><dt>审批 ID</dt><dd class="mono">${esc(req.requestId)}</dd></div>
+      <div class="kv"><dt>任务</dt><dd><a class="mono" href="#/tasks/${encodeURIComponent(req.taskId)}">${esc(shortId(req.taskId))}</a></dd></div>
+      <div class="kv"><dt>任务状态</dt><dd>${taskBadge}</dd></div>
+      <div class="kv"><dt>工具</dt><dd class="mono">${esc(req.toolId)}</dd></div>
+      <div class="kv"><dt>风险档</dt><dd>${riskBadgeHtml(req.riskLevel)}</dd></div>
+      <div class="kv"><dt>请求时间</dt><dd>${esc(formatTimestamp(req.requestedAt))}</dd></div>
+      <div class="kv"><dt>超时倒计时</dt><dd>${countdown}</dd></div>
+    </dl>
+    <p class="hint hint--static">${esc(hint.hint)}</p>`
+    });
+    const digest = cardHtml({
+      title: "参数摘要",
+      body: `<dl class="kv-grid">
+      <div class="kv"><dt>参数摘要（argsDigest）</dt><dd class="mono">${esc(m.detail.argsDigest ?? "—")}</dd></div>
+      <div class="kv"><dt>快照保存时间</dt><dd>${esc(formatTimestamp(m.detail.snapshot?.savedAt))}</dd></div>
+      <div class="kv"><dt>快照字节量</dt><dd>${m.detail.snapshot ? formatThousands(m.detail.snapshot.contextBytes) : "—"}</dd></div>
+      <div class="kv"><dt>版本内容哈希</dt><dd class="mono">${esc(m.detail.binding?.contentHash ?? "—")}</dd></div>
+    </dl>
+    <p class="hint">明文入参不离开服务端（PauseContext 不出库），前端不展示、不缓存。</p>`
+    });
+    const decided = cardHtml({ title: "决议", body: decidedSectionHtml(req) });
+    const cliGuide = req.decision === "approved" ? `<pre class="code-block"><code>shanhai task run ${esc(req.taskId)} --resume --resumed-by manual-resume</code></pre>` : "";
+    const actions = hint.decidable ? `<div class="detail-actions">
+        <button type="button" class="btn btn--primary" data-action="approve">批准（approve）</button>
+        <button type="button" class="btn btn--danger" data-action="deny">否决（deny，任务终局）</button>
+      </div>` : '<p class="hint">当前状态不可决议</p>';
+    const actionsCard = cardHtml({ title: "决议操作", body: `${actions}${cliGuide}` });
+    return `${header}${feedbackHtml(m.feedback)}${head}${digest}${decided}${actionsCard}`;
+  }
+
+  // src/portal/ui/approvalsPage.ts
+  var PAGE_SIZE2 = 20;
+  var POLL_INTERVAL_MS3 = 5e3;
+  function asRows2(data) {
+    const rows = Array.isArray(data) ? data : [];
+    return rows.filter((r) => typeof r === "object" && r !== null && typeof r.requestId === "string");
+  }
+  function mountApprovalsPage(ctx, _query) {
+    void _query;
+    let mode = "pending";
+    let decisionFilter = null;
+    let page = 0;
+    let allFetched = [];
+    let feedback = null;
+    let authFailed = false;
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    function viewRows() {
+      const source = mode === "pending" ? pendingViewRows(allFetched) : allViewRows(allFetched);
+      return mode === "all" && decisionFilter !== null ? source.filter((r) => r.decision === decisionFilter) : source;
+    }
+    function render() {
+      const rows = viewRows();
+      const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE2));
+      const clamped = Math.min(page, pageCount - 1);
+      ctx.view.innerHTML = approvalsPageHtml({
+        mode,
+        rows: rows.slice(clamped * PAGE_SIZE2, clamped * PAGE_SIZE2 + PAGE_SIZE2),
+        page: clamped,
+        pageCount,
+        decisionFilter,
+        feedback,
+        now: ctx.now()
+      });
+    }
+    async function refresh() {
+      if (authFailed) return;
+      const res = await apiGet(mode === "pending" ? "/api/approvals?pending=true" : "/api/approvals", deps);
+      if (!res.ok && res.kind === "http" && res.status === 401) {
+        authFailed = true;
+        poller.stop();
+        ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+        return;
+      }
+      if (res.ok) {
+        allFetched = asRows2(res.data);
+        render();
+      }
+    }
+    const poller = createPoller({ intervalMs: POLL_INTERVAL_MS3, fn: refresh, timerHost: ctx.timerHost });
+    function onClick(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-action]");
+      if (!hit) return;
+      const action = hit.dataset.action;
+      if (action === "view-pending" && mode !== "pending") {
+        mode = "pending";
+        decisionFilter = null;
+        page = 0;
+        void refresh();
+      } else if (action === "view-all" && mode !== "all") {
+        mode = "all";
+        page = 0;
+        void refresh();
+      } else if (action === "page-prev" && page > 0) {
+        page -= 1;
+        render();
+      } else if (action === "page-next") {
+        page += 1;
+        render();
+      }
+    }
+    function onChange(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-filter]");
+      if (!hit || hit.dataset.filter !== "decision") return;
+      decisionFilter = target?.value ? target.value : null;
+      page = 0;
+      render();
+    }
+    function onVisibility(ev) {
+      const t = ev?.target;
+      const hidden = typeof t?.hidden === "boolean" ? t.hidden : ctx.doc.hidden;
+      poller.onVisibility(!hidden);
+    }
+    ctx.view.addEventListener("click", onClick);
+    ctx.view.addEventListener("change", onChange);
+    ctx.doc.addEventListener("visibilitychange", onVisibility);
+    void refresh();
+    poller.start();
+    return {
+      destroy() {
+        ctx.view.removeEventListener("click", onClick);
+        ctx.view.removeEventListener("change", onChange);
+        ctx.doc.removeEventListener("visibilitychange", onVisibility);
+        poller.stop();
+      }
+    };
+  }
+
+  // src/portal/ui/approvalDetailPage.ts
+  function mountApprovalDetailPage(ctx, requestId) {
+    let detail = null;
+    let taskStatus = null;
+    let feedback = null;
+    let authFailed = false;
+    const gate = createWriteGate();
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    function render() {
+      if (!detail) {
+        ctx.view.innerHTML = '<div class="loading-state" role="status">加载中……</div>';
+        return;
+      }
+      ctx.view.innerHTML = approvalDetailHtml({ detail, taskStatus, feedback, now: ctx.now() });
+    }
+    async function refresh() {
+      if (authFailed) return;
+      const res = await apiGet(`/api/approvals/${encodeURIComponent(requestId)}`, deps);
+      if (!res.ok && res.kind === "http" && res.status === 401) {
+        authFailed = true;
+        ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+        return;
+      }
+      if (!res.ok && res.kind === "http" && res.status === 404) {
+        ctx.view.innerHTML = `<div class="error-state" role="alert"><span class="error-state__code">not_found</span><p class="error-state__message">审批请求不存在：${requestId}</p><a class="btn btn--secondary" href="#/approvals">返回审批列表</a></div>`;
+        return;
+      }
+      if (res.ok) {
+        detail = res.data;
+        const taskId = detail.request.taskId;
+        const taskRes = await apiGet(`/api/tasks/${encodeURIComponent(taskId)}`, deps);
+        if (taskRes.ok) {
+          const status = taskRes.data.status;
+          taskStatus = typeof status === "string" ? status : null;
+        }
+        render();
+      }
+    }
+    async function decide(action) {
+      if (!gate.acquire()) return;
+      try {
+        const fresh = await apiGet(`/api/approvals/${encodeURIComponent(requestId)}`, deps);
+        if (fresh.ok) {
+          detail = fresh.data;
+          if (detail.request.decision !== "pending") {
+            feedback = { kind: "error", text: "该审批已被处理" };
+            const taskId = detail.request.taskId;
+            const taskRes = await apiGet(`/api/tasks/${encodeURIComponent(taskId)}`, deps);
+            if (taskRes.ok) {
+              const status = taskRes.data.status;
+              taskStatus = typeof status === "string" ? status : null;
+            }
+            render();
+            return;
+          }
+        }
+        const op = action === "approve" ? approveOp(requestId) : denyOp(requestId);
+        const outcome = await runWrite(op, { confirmBox: ctx.confirmBox, post: (path, body) => apiPost(path, body, deps) });
+        if (outcome.ok) {
+          feedback = { kind: "success", text: action === "approve" ? "已批准（approve 只写决议，任务保持挂起）" : "已否决（deny 为任务级终局：cancelled/approval_denied）" };
+        } else if (outcome.kind === "network") {
+          feedback = { kind: "error", text: explainFailure({ ok: false, kind: "network" }) };
+        } else if (outcome.kind === "failure") {
+          feedback = { kind: "error", text: `${explainFailure({ ok: false, kind: "http", status: outcome.status, code: outcome.code, message: outcome.message })}（${outcome.code}：${outcome.message}）` };
+        }
+        await refresh();
+      } finally {
+        gate.release();
+      }
+    }
+    function onClick(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-action]");
+      if (!hit) return;
+      if (hit.dataset.action === "approve") void decide("approve");
+      else if (hit.dataset.action === "deny") void decide("deny");
+    }
+    ctx.view.addEventListener("click", onClick);
+    render();
+    void refresh();
+    return {
+      destroy() {
+        ctx.view.removeEventListener("click", onClick);
+      }
+    };
   }
 
   // src/portal/ui/main.ts
@@ -342,6 +1473,35 @@
       renderConnection();
     }
     const probePoller = createPoller({ intervalMs: probeIntervalMs, fn: probe, timerHost });
+    let activePage = null;
+    function mountPage(route, query) {
+      if (!view) return;
+      const ctx = {
+        doc,
+        view,
+        fetchImpl,
+        timerHost,
+        confirmBox: opts.confirmBox ?? ((text) => win.confirm(text)),
+        now: () => Date.now()
+      };
+      switch (route.view) {
+        case "tasks":
+          activePage = mountTasksPage(ctx, query);
+          break;
+        case "task-detail":
+          activePage = mountTaskDetailPage(ctx, route.id);
+          break;
+        case "approvals":
+          activePage = mountApprovalsPage(ctx, query);
+          break;
+        case "approval-detail":
+          activePage = mountApprovalDetailPage(ctx, route.id);
+          break;
+        default:
+          activePage = null;
+          break;
+      }
+    }
     function renderRoute() {
       const hash = location.hash;
       const redirect = legacyRedirect(hash);
@@ -350,8 +1510,11 @@
         return;
       }
       if (!view) return;
+      if (activePage) activePage.destroy();
+      activePage = null;
       const { route, query } = parseHash(hash);
       view.innerHTML = renderContent(route, query);
+      mountPage(route, query);
       const navKey = activeNavKey(route.view);
       for (const link of doc.querySelectorAll("[data-nav]")) {
         const el = link;

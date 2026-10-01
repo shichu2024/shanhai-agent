@@ -3,8 +3,11 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "noEmit": true,
-    "rootDir": "src/portal/ui"
+    "rootDir": "src/portal"
   },
-  "include": ["src/portal/ui/**/*.ts"],
+  "include": [
+    "src/portal/ui/**/*.ts",
+    "src/portal/view/write.ts"
+  ],
   "exclude": []
 }

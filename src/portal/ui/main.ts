@@ -17,6 +17,11 @@ import {
 } from './connection.js';
 import { createPoller, type TimerHost } from './poll.js';
 import { renderContent } from './pages.js';
+import type { PageCtx, PageHandle } from './pageCtx.js';
+import { mountTasksPage } from './tasksPage.js';
+import { mountTaskDetailPage } from './taskDetailPage.js';
+import { mountApprovalsPage } from './approvalsPage.js';
+import { mountApprovalDetailPage } from './approvalDetailPage.js';
 
 declare const __PORTAL_APP_VERSION__: string;
 
@@ -36,6 +41,8 @@ export interface BootOptions {
   timerHost?: TimerHost;
   fetchImpl?: typeof fetch;
   probeIntervalMs?: number;
+  /** 确认框实现（默认 window.confirm；测试可注入） */
+  confirmBox?: (text: string) => boolean;
 }
 
 export interface BootDeps {
@@ -101,6 +108,27 @@ export function boot(opts: BootOptions = {}): void {
 
   const probePoller = createPoller({ intervalMs: probeIntervalMs, fn: probe, timerHost });
 
+  let activePage: PageHandle | null = null;
+
+  function mountPage(route: ReturnType<typeof parseHash>['route'], query: Record<string, string>): void {
+    if (!view) return;
+    const ctx: PageCtx = {
+      doc,
+      view,
+      fetchImpl,
+      timerHost,
+      confirmBox: opts.confirmBox ?? ((text: string) => win.confirm(text)),
+      now: () => Date.now(),
+    };
+    switch (route.view) {
+      case 'tasks': activePage = mountTasksPage(ctx, query); break;
+      case 'task-detail': activePage = mountTaskDetailPage(ctx, route.id); break;
+      case 'approvals': activePage = mountApprovalsPage(ctx, query); break;
+      case 'approval-detail': activePage = mountApprovalDetailPage(ctx, route.id); break;
+      default: activePage = null; break;
+    }
+  }
+
   function renderRoute(): void {
     const hash = location.hash;
     const redirect = legacyRedirect(hash);
@@ -109,8 +137,11 @@ export function boot(opts: BootOptions = {}): void {
       return;
     }
     if (!view) return;
+    if (activePage) activePage.destroy(); // 路由切换：停旧页轮询与监听（FR-G-4 页面级轮询生命周期）
+    activePage = null;
     const { route, query } = parseHash(hash);
     view.innerHTML = renderContent(route, query);
+    mountPage(route, query);
     const navKey = activeNavKey(route.view);
     for (const link of doc.querySelectorAll('[data-nav]')) {
       const el = link as HTMLElement;
