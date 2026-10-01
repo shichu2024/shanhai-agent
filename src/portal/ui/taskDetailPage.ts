@@ -8,7 +8,7 @@ import type { PageCtx, PageHandle } from './pageCtx.js';
 import { ds } from './pageCtx.js';
 import { createPoller } from './poll.js';
 import { isRunningStale } from './taskFilters.js';
-import { taskDetailHtml, type ChildTaskRow, type EventRow, type EvidenceRefRow, type TaskDetailRow } from './taskDetailView.js';
+import { evidenceRowsOf, taskDetailHtml, type ChildTaskRow, type EventRow, type EvidenceRefRow, type TaskDetailRow } from './taskDetailView.js';
 import type { PageFeedback } from './tasksView.js';
 import { loadToken } from './token.js';
 import { cancelOp, crashRecoveryOp, createWriteGate, resumeFeedback, resumeOp, runWrite } from './writeFlow.js';
@@ -65,8 +65,7 @@ export function mountTaskDetailPage(ctx: PageCtx, taskId: string): PageHandle {
     if (taskRes.ok) task = asObject(taskRes.data) as unknown as TaskDetailRow;
     if (eventsRes.ok) events = Array.isArray(eventsRes.data) ? (eventsRes.data as EventRow[]) : [];
     if (evidenceRes.ok) {
-      const refs = (evidenceRes.data as { refs?: unknown }).refs;
-      evidence = Array.isArray(refs) ? (refs as EvidenceRefRow[]) : [];
+      evidence = evidenceRowsOf(evidenceRes.data); // TaskEvidenceChain 实测形状派生（7-3 随批修复）
     }
     if (childrenRes.ok) {
       const tasks = Array.isArray((childrenRes.data as { tasks?: unknown }).tasks)

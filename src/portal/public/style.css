@@ -899,3 +899,93 @@ input.invalid {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+.stat-card--muted {
+  opacity: 0.55;
+}
+.feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.feed-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0;
+}
+.feed-item__time {
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-3);
+}
+.entry-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+  transition: border-color 150ms ease;
+}
+.entry-card:hover {
+  border-color: var(--color-primary);
+}
+.entry-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+.entry-card__label {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.entry-card__hint {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.badge--pending-evidence {
+  color: var(--color-warning);
+  background: #FEF3C7;
+  border: 1px solid #FCD34D;
+  font-size: var(--fs-xs);
+}
+.badge--evolution-open {
+  color: var(--color-primary);
+  background: #DBEAFE;
+  border: 1px solid #93C5FD;
+}
+.badge--evolution-confirmed {
+  color: var(--color-success);
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+}
+.badge--evolution-dismissed {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+}
+.evidence-form {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+.evidence-form .filter__search {
+  flex: 1;
+}
+.input-error {
+  color: var(--color-danger);
+  font-size: var(--fs-xs);
+  margin: var(--sp-1) 0 0;
+}

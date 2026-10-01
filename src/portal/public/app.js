@@ -209,6 +209,9 @@
     const high = level === "L3" || level === "L4";
     return `<span class="badge badge--risk${high ? " badge--danger" : ""}">${esc(level)}</span>`;
   }
+  function buttonHtml(label, kind = "secondary", extra = "") {
+    return `<button type="button" class="btn btn--${kind}"${extra ? ` ${extra}` : ""}>${esc(label)}</button>`;
+  }
   function emptyStateHtml(opts) {
     const action = opts.actionLabel ? `<button type="button" class="btn btn--primary"${opts.actionAttrs ? ` ${opts.actionAttrs}` : ""}>${esc(opts.actionLabel)}</button>` : "";
     const hint = opts.hint ? `<p class="empty-state__hint">${esc(opts.hint)}</p>` : "";
@@ -224,6 +227,9 @@
   function tableHtml(opts) {
     const head = opts.columns.map((c) => `<th scope="col">${esc(c)}</th>`).join("");
     return `<div class="table-wrap"><table class="table">${opts.caption ? `<caption>${esc(opts.caption)}</caption>` : ""}<thead><tr>${head}</tr></thead><tbody>${opts.rowsHtml}</tbody></table></div>`;
+  }
+  function toastHtml(message, type = "info") {
+    return `<div class="toast toast--${type}" role="${type === "error" ? "alert" : "status"}">${esc(message)}</div>`;
   }
   function pageHeaderHtml(opts) {
     const beast = beastHeaderOf(opts.view);
@@ -242,6 +248,17 @@
     if (Number.isNaN(d.getTime())) return iso;
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
   }
+  function relativeTime(iso, now) {
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return "—";
+    const diff = Math.max(0, now - t);
+    const seconds = Math.floor(diff / 1e3);
+    if (seconds < 10) return "刚刚";
+    if (seconds < 60) return `${seconds} 秒前`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
+    return `${Math.floor(seconds / 86400)} 天前`;
+  }
   function shortId(id) {
     return id.slice(0, 8);
   }
@@ -251,11 +268,6 @@
 
   // src/portal/ui/pages.ts
   var BATCH_HINTS = {
-    "observe": "总控统计卡 + 合并时间线 + 快速入口由批次 7-3 交付",
-    "observe-capabilities": "白泽·能力矩阵（Agent 选择器/筛选）由批次 7-3 交付",
-    "observe-evolution": "女娲·演进候选列表（状态分组/详情侧栏，整页只读）由批次 7-3 交付",
-    "observe-evolution-detail": "演进候选详情五区由批次 7-3 交付",
-    "observe-evidence": "夔牛·证据按 ref 直查由批次 7-3 交付",
     "agents": "Agent 目录（前端去重聚合）由批次 7-4 交付",
     "agent-detail": "Agent 详情四读面（card/trend/insight/report）由批次 7-4 交付"
   };
@@ -306,15 +318,15 @@
       case "approval-detail":
         return loadingPage("approval-detail", { id: route.id });
       case "observe":
-        return `${observeTabsHtml("observe")}${placeholderPage("observe")}`;
+        return `${observeTabsHtml("observe")}${loadingPage("observe")}`;
       case "observe-capabilities":
-        return `${observeTabsHtml("observe-capabilities")}${placeholderPage("observe-capabilities")}`;
+        return `${observeTabsHtml("observe-capabilities")}${loadingPage("observe-capabilities")}`;
       case "observe-evolution":
-        return `${observeTabsHtml("observe-evolution")}${placeholderPage("observe-evolution")}`;
+        return `${observeTabsHtml("observe-evolution")}${loadingPage("observe-evolution")}`;
       case "observe-evolution-detail":
-        return `${observeTabsHtml("observe-evolution-detail")}${placeholderPage("observe-evolution-detail", { id: route.id })}`;
+        return `${observeTabsHtml("observe-evolution-detail")}${loadingPage("observe-evolution-detail", { id: route.id })}`;
       case "observe-evidence":
-        return `${observeTabsHtml("observe-evidence")}${placeholderPage("observe-evidence")}`;
+        return `${observeTabsHtml("observe-evidence")}${loadingPage("observe-evidence")}`;
       case "agents":
         return placeholderPage("agents");
       case "agent-detail":
@@ -859,6 +871,27 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
   }
 
   // src/portal/ui/taskDetailView.ts
+  function evidenceRowsOf(data) {
+    if (typeof data !== "object" || data === null) return [];
+    const chain = data;
+    const rows = [];
+    if (typeof chain.taskId === "string" && chain.taskId.length > 0) rows.push({ ref: `task:${chain.taskId}`, kind: "task" });
+    const trace = typeof chain.trace === "object" && chain.trace !== null && Array.isArray(chain.trace.eventIds) ? chain.trace.eventIds : [];
+    for (const e of trace) {
+      if (typeof e === "string" && e.length > 0) rows.push({ ref: `trace_event:${e}`, kind: "trace_event" });
+    }
+    for (const f of Array.isArray(chain.failures) ? chain.failures : []) {
+      if (typeof f === "object" && f !== null && typeof f.recordId === "string") {
+        rows.push({ ref: `failure:${f.recordId}`, kind: "failure" });
+      }
+    }
+    for (const m of Array.isArray(chain.memories) ? chain.memories : []) {
+      if (typeof m === "object" && m !== null && typeof m.memoryId === "string") {
+        rows.push({ ref: `memory:${m.memoryId}`, kind: "memory" });
+      }
+    }
+    return rows;
+  }
   var INPUT_COLLAPSE_LINES = 50;
   function collapseInput(input) {
     const lines = input.split("\n");
@@ -1010,8 +1043,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       if (taskRes.ok) task = asObject(taskRes.data);
       if (eventsRes.ok) events = Array.isArray(eventsRes.data) ? eventsRes.data : [];
       if (evidenceRes.ok) {
-        const refs = evidenceRes.data.refs;
-        evidence = Array.isArray(refs) ? refs : [];
+        evidence = evidenceRowsOf(evidenceRes.data);
       }
       if (childrenRes.ok) {
         const tasks = Array.isArray(childrenRes.data.tasks) ? childrenRes.data.tasks : [];
@@ -1419,6 +1451,815 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
     };
   }
 
+  // src/portal/ui/cache.ts
+  function createCache(opts) {
+    const store = /* @__PURE__ */ new Map();
+    return {
+      get(key, fetcher) {
+        const hit = store.get(key);
+        if (hit) {
+          if (hit.inflight) return hit.inflight;
+          if (opts.now() - hit.at <= opts.ttlMs) return Promise.resolve(hit.value);
+        }
+        store.set(key, { value: void 0, at: 0, inflight: null });
+        const entry = store.get(key);
+        const p = (async () => {
+          try {
+            const value = await fetcher();
+            store.set(key, { value, at: opts.now(), inflight: null });
+            return value;
+          } catch (err) {
+            if (store.get(key) === entry) store.delete(key);
+            throw err;
+          }
+        })();
+        entry.inflight = p;
+        return p;
+      },
+      invalidate(key) {
+        const cur = store.get(key);
+        if (cur && cur.inflight) return;
+        store.delete(key);
+      },
+      clear() {
+        store.clear();
+      },
+      size() {
+        return store.size;
+      }
+    };
+  }
+
+  // src/portal/ui/observeCache.ts
+  var OBSERVE_CACHE_TTL_MS = 5e3;
+  function createObserveCache(now) {
+    return createCache({ ttlMs: OBSERVE_CACHE_TTL_MS, now });
+  }
+  var sharedInstance = null;
+  function sharedObserveCache() {
+    if (!sharedInstance) sharedInstance = createObserveCache(() => Date.now());
+    return sharedInstance;
+  }
+
+  // src/portal/ui/observeData.ts
+  var CAPABILITY_STATUS_LABELS = {
+    candidate: "待确认",
+    active: "已生效",
+    retired: "已退场"
+  };
+  var CAPABILITY_KIND_LABELS = {
+    capability: "能力",
+    limitation: "局限"
+  };
+  var CAPABILITY_ORIGIN_LABELS = {
+    derived: "派生",
+    manual: "人工"
+  };
+  var EVOLUTION_STATUSES = ["open", "confirmed", "dismissed"];
+  var EVOLUTION_STATUS_LABELS = {
+    open: "待决策",
+    confirmed: "已确认",
+    dismissed: "已驳回"
+  };
+  var EVOLUTION_TRIGGER_LABELS = {
+    repeated_failure: "重复失败",
+    capability_degradation: "能力退化"
+  };
+  function taskSuccessRate(counts) {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const denominator = total - (counts.cancelled ?? 0);
+    if (denominator <= 0) return null;
+    return counts.succeeded / denominator;
+  }
+  function capabilityStatusCounts(rows) {
+    const counts = { candidate: 0, active: 0, retired: 0 };
+    for (const r of rows) {
+      if (r.status === "candidate" || r.status === "active" || r.status === "retired") counts[r.status] += 1;
+    }
+    return counts;
+  }
+  function mergeTimeline(tasks, approvals, maxTasks = 10) {
+    const topTasks = [...tasks].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, maxTasks).map((t) => ({ kind: "task", at: t.createdAt, taskId: t.taskId, status: t.status }));
+    const topApprovals = [...approvals].sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt)).map((a) => ({ kind: "approval", at: a.requestedAt, requestId: a.requestId, toolId: a.toolId }));
+    return [...topTasks, ...topApprovals].sort((a, b) => {
+      const d = Date.parse(b.at) - Date.parse(a.at);
+      if (d !== 0) return d;
+      return a.kind === b.kind ? 0 : a.kind === "task" ? -1 : 1;
+    });
+  }
+  function oldestPendingRel(approvals, now) {
+    if (approvals.length === 0) return "";
+    let oldest = approvals[0].requestedAt;
+    for (const a of approvals) {
+      if (Date.parse(a.requestedAt) < Date.parse(oldest)) oldest = a.requestedAt;
+    }
+    return `最老待办 ${relativeTime(oldest, now)}`;
+  }
+  function collectAgentIds(tasks, capabilities) {
+    return [.../* @__PURE__ */ new Set([...tasks.map((t) => t.agentId), ...capabilities.map((c) => c.agentId)])].sort();
+  }
+  function truncateText(text, max) {
+    return text.length <= max ? text : `${text.slice(0, max)}…`;
+  }
+  function firstLine(text) {
+    if (!text) return "";
+    const i = text.indexOf("\n");
+    return i < 0 ? text : text.slice(0, i);
+  }
+  function parseEvolutionEvidenceRefs(raw) {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((e) => typeof e === "object" && e !== null && typeof e.taskId === "string");
+    } catch {
+      return [];
+    }
+  }
+  function taskEvidenceRef(taskId) {
+    return `task:${taskId}`;
+  }
+  var EVIDENCE_PAYLOAD_COLLAPSE_CHARS = 2048;
+  function digestHead(digest) {
+    return digest.slice(0, 12);
+  }
+  function prettyJson(text) {
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+      return text;
+    }
+  }
+
+  // src/portal/ui/observeOverviewView.ts
+  var SEVEN = ["created", "queued", "running", "paused", "succeeded", "failed", "cancelled"];
+  var QUICK_ENTRIES = [
+    { label: "任务列表", hash: "#/tasks", hint: "应龙·任务工作台" },
+    { label: "审批中心", hash: "#/approvals", hint: "玄武·审批与发布守卫" },
+    { label: "Agent 目录", hash: "#/agents", hint: "Agent 目录与详情" },
+    { label: "证据查询", hash: "#/observe/evidence", hint: "夔牛·按 ref 直查" }
+  ];
+  function taskStatsCardHtml(m) {
+    const note = m.taskTotalAll > 100 ? '<p class="hint">基于最近 100 条（全量更多，客户端聚合口径）</p>' : "";
+    const cards = SEVEN.map((s) => `<div class="stat-card${m.taskCounts[s] === 0 ? " stat-card--zero stat-card--muted" : ""}"><span class="stat-card__value">${m.taskCounts[s]}</span><span class="stat-card__label">${esc(STATUS_LABELS[s])}</span></div>`).join("");
+    const rate = m.successRate === null ? "—" : `${Math.round(m.successRate * 100)}%`;
+    const total = `<div class="stat-card stat-card--total"><span class="stat-card__value">${m.taskTotal}</span><span class="stat-card__label">合计</span></div>
+    <div class="stat-card stat-card--total"><span class="stat-card__value">${rate}</span><span class="stat-card__label">成功率</span></div>`;
+    return cardHtml({
+      title: "任务统计（最近 100 条客户端聚合，无统计端点）",
+      body: `<div class="stat-grid">${cards}${total}</div>${note}`
+    });
+  }
+  function approvalsCardHtml(m) {
+    const oldest = m.oldestPending ? `<p class="hint">${esc(m.oldestPending)}</p>` : '<p class="hint">当前无待办审批</p>';
+    return cardHtml({
+      title: "待办审批",
+      body: `<div class="stat-grid"><div class="stat-card stat-card--total"><span class="stat-card__value">${m.pendingCount}</span><span class="stat-card__label">待决议</span></div></div>${oldest}`
+    });
+  }
+  function capabilityCardHtml(m) {
+    const statuses = ["candidate", "active", "retired"];
+    const cards = statuses.map((s) => `<div class="stat-card${m.capabilityCounts[s] === 0 ? " stat-card--muted" : ""}"><span class="stat-card__value">${m.capabilityCounts[s]}</span><span class="stat-card__label">${esc(CAPABILITY_STATUS_LABELS[s])}</span></div>`).join("");
+    return cardHtml({
+      title: "能力登记",
+      body: `<div class="stat-grid">${cards}</div>`
+    });
+  }
+  function timelineHtml2(entries) {
+    if (entries.length === 0) {
+      return cardHtml({ title: "合并时间线（最新任务 + 待办审批）", body: emptyStateHtml({ title: "暂无动态" }) });
+    }
+    const rows = entries.map((e) => {
+      if (e.kind === "task") {
+        return `<li class="feed-item"><span class="feed-item__time">${esc(formatTimestamp(e.at))}</span><a class="mono" href="#/tasks/${encodeURIComponent(e.taskId)}" title="${esc(e.taskId)}">${esc(shortId(e.taskId))}</a>${statusBadgeHtml(e.status)}</li>`;
+      }
+      return `<li class="feed-item"><span class="feed-item__time">${esc(formatTimestamp(e.at))}</span><a class="mono" href="#/approvals/${encodeURIComponent(e.requestId)}" title="${esc(e.requestId)}">${esc(shortId(e.requestId))}</a><span class="hint">${esc(e.toolId)}</span>${decisionBadgeHtml("pending")}</li>`;
+    }).join("");
+    return cardHtml({
+      title: "合并时间线（最新任务前 10 + 待办审批，时间倒序）",
+      body: `<ul class="feed">${rows}</ul>`
+    });
+  }
+  function quickEntriesHtml() {
+    const items = QUICK_ENTRIES.map((q) => `<a class="entry-card" href="${q.hash}"><span class="entry-card__label">${esc(q.label)}</span><span class="entry-card__hint">${esc(q.hint)}</span></a>`).join("");
+    return cardHtml({ title: "快速入口", body: `<div class="entry-grid">${items}</div>` });
+  }
+  function observeOverviewHtml(m) {
+    const header = pageHeaderHtml({ view: "observe", title: "观测·总控" });
+    return `${observeTabsHtml("observe")}${header}${taskStatsCardHtml(m)}${approvalsCardHtml(m)}${capabilityCardHtml(m)}${timelineHtml2(m.timeline)}${quickEntriesHtml()}`;
+  }
+
+  // src/portal/ui/observeOverviewPage.ts
+  var POLL_INTERVAL_MS4 = 5e3;
+  var STATS_LIMIT2 = 100;
+  var TASKS_PATH = `/api/tasks?limit=${STATS_LIMIT2}`;
+  var PENDING_PATH = "/api/approvals?pending=true";
+  var CAPABILITIES_PATH = "/api/capabilities";
+  function isRecord(v) {
+    return typeof v === "object" && v !== null;
+  }
+  function taskRowsOf(data) {
+    const body = isRecord(data) && Array.isArray(data.tasks) ? data.tasks : Array.isArray(data) ? data : [];
+    return body.filter((r) => isRecord(r) && typeof r.taskId === "string");
+  }
+  function approvalRowsOf(data) {
+    const rows = Array.isArray(data) ? data : [];
+    return rows.filter((r) => isRecord(r) && typeof r.requestId === "string");
+  }
+  function capabilityRowsOf(data) {
+    const rows = Array.isArray(data) ? data : [];
+    return rows.filter((r) => isRecord(r) && typeof r.status === "string");
+  }
+  function mountObserveOverviewPage(ctx, opts = {}) {
+    const cache = opts.cache ?? sharedObserveCache();
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    let taskRows = [];
+    let taskTotalAll = 0;
+    let approvals = [];
+    let capabilityRows = [];
+    let authFailed = false;
+    async function cachedGet(path) {
+      try {
+        return await cache.get(path, async () => {
+          const r = await apiGet(path, deps);
+          if (!r.ok) throw r;
+          return r;
+        });
+      } catch (err) {
+        return err;
+      }
+    }
+    function render() {
+      const counts = countByStatus(taskRows);
+      ctx.view.innerHTML = observeOverviewHtml({
+        taskCounts: counts,
+        taskTotal: taskRows.length,
+        taskTotalAll,
+        successRate: taskSuccessRate(counts),
+        pendingCount: approvals.length,
+        oldestPending: oldestPendingRel(approvals, ctx.now()),
+        capabilityCounts: capabilityStatusCounts(capabilityRows),
+        timeline: mergeTimeline(taskRows, approvals),
+        loading: false,
+        now: ctx.now()
+      });
+    }
+    function renderAuthFailed() {
+      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    }
+    async function refresh() {
+      if (authFailed) return;
+      const [tasksRes, approvalsRes, capabilitiesRes] = await Promise.all([
+        cachedGet(TASKS_PATH),
+        cachedGet(PENDING_PATH),
+        cachedGet(CAPABILITIES_PATH)
+      ]);
+      const failed = [tasksRes, approvalsRes, capabilitiesRes].filter((r) => !r.ok);
+      if (failed.some((r) => r.kind === "http" && r.status === 401)) {
+        authFailed = true;
+        poller.stop();
+        renderAuthFailed();
+        return;
+      }
+      if (tasksRes.ok) {
+        taskRows = taskRowsOf(tasksRes.data);
+        const total = isRecord(tasksRes.data) ? tasksRes.data.total : void 0;
+        taskTotalAll = typeof total === "number" ? total : taskRows.length;
+      }
+      if (approvalsRes.ok) approvals = approvalRowsOf(approvalsRes.data);
+      if (capabilitiesRes.ok) capabilityRows = capabilityRowsOf(capabilitiesRes.data);
+      render();
+    }
+    const poller = createPoller({ intervalMs: POLL_INTERVAL_MS4, fn: refresh, timerHost: ctx.timerHost });
+    function onVisibility(ev) {
+      const t = ev?.target;
+      const hidden = typeof t?.hidden === "boolean" ? t.hidden : ctx.doc.hidden;
+      poller.onVisibility(!hidden);
+    }
+    ctx.doc.addEventListener("visibilitychange", onVisibility);
+    void refresh();
+    poller.start();
+    return {
+      destroy() {
+        ctx.doc.removeEventListener("visibilitychange", onVisibility);
+        poller.stop();
+      }
+    };
+  }
+
+  // src/portal/ui/observeCapabilitiesView.ts
+  var KIND_OPTIONS = ["capability", "limitation"];
+  var STATUS_OPTIONS = ["candidate", "active", "retired"];
+  function selectorHtml(m) {
+    if (m.agents.length === 0) {
+      return cardHtml({ title: "Agent 选择器（前端聚合，无 /api/agents 端点）", body: emptyStateHtml({ title: "暂无 Agent 数据" }) });
+    }
+    const agentOpts = [
+      '<option value="">全部 Agent</option>',
+      ...m.agents.map((a) => `<option value="${esc(a)}"${m.filters.agent === a ? " selected" : ""}>${esc(a)}</option>`)
+    ].join("");
+    const kindOpts = [
+      '<option value="">全部类型</option>',
+      ...KIND_OPTIONS.map((k) => `<option value="${k}"${m.filters.kind === k ? " selected" : ""}>${esc(CAPABILITY_KIND_LABELS[k])}</option>`)
+    ].join("");
+    const statusOpts = [
+      '<option value="">全部状态</option>',
+      ...STATUS_OPTIONS.map((s) => `<option value="${s}"${m.filters.status === s ? " selected" : ""}>${esc(CAPABILITY_STATUS_LABELS[s])}</option>`)
+    ].join("");
+    return cardHtml({
+      title: "Agent 选择器（前端聚合，无 /api/agents 端点）",
+      body: `<div class="filter-bar">
+      <label class="filter">Agent<select data-filter="agent">${agentOpts}</select></label>
+      <label class="filter">类型<select data-filter="kind">${kindOpts}</select></label>
+      <label class="filter">状态<select data-filter="status">${statusOpts}</select></label>
+      <span class="hint">仅含近期有任务或有能力登记的 Agent</span>
+      ${buttonHtml("清除筛选", "ghost", 'data-action="clear-filters"')}
+    </div>`
+    });
+  }
+  function matrixHtml(m) {
+    if (m.rows.length === 0) {
+      return cardHtml({
+        title: "能力矩阵（只读）",
+        body: emptyStateHtml({ title: "当前筛选无匹配", hint: "调整筛选条件或清除筛选", actionLabel: "清除筛选", actionAttrs: 'data-action="clear-filters"' })
+      });
+    }
+    const rows = m.rows.map((r) => {
+      const evidence = r.evidencePending ? '<span class="badge badge--pending-evidence">待补证据</span>' : String(r.evidenceRefCount);
+      const decided = `${r.decidedAt ? esc(formatTimestamp(r.decidedAt)) : "—"}${r.decidedBy ? `（${esc(r.decidedBy)}）` : ""}`;
+      return `<tr>
+      <td class="mono" title="${esc(r.capabilityId)}">${esc(shortId(r.capabilityId))}</td>
+      <td>${esc(CAPABILITY_KIND_LABELS[r.kind] ?? r.kind)}</td>
+      <td>${esc(CAPABILITY_ORIGIN_LABELS[r.origin] ?? r.origin)}</td>
+      <td title="${esc(r.statement)}">${esc(truncateText(r.statement, 80))}</td>
+      <td>${esc(CAPABILITY_STATUS_LABELS[r.status] ?? r.status)}</td>
+      <td>${evidence}</td>
+      <td>${esc(formatTimestamp(r.createdAt))}</td>
+      <td>${decided}</td>
+    </tr>`;
+    }).join("");
+    return tableHtml({
+      caption: "能力矩阵（只读，capabilityListRow 实测投影）",
+      columns: ["能力 ID", "类型", "来源", "陈述", "状态", "证据", "登记时间", "决议"],
+      rowsHtml: rows
+    });
+  }
+  function observeCapabilitiesHtml(m) {
+    const header = pageHeaderHtml({ view: "observe-capabilities", title: "观测·白泽·能力" });
+    return `${observeTabsHtml("observe-capabilities")}${header}${selectorHtml(m)}${matrixHtml(m)}`;
+  }
+
+  // src/portal/ui/observeCapabilitiesPage.ts
+  var POLL_INTERVAL_MS5 = 1e4;
+  var STATS_LIMIT3 = 100;
+  var TASKS_PATH2 = `/api/tasks?limit=${STATS_LIMIT3}`;
+  var CAPABILITIES_BASE = "/api/capabilities";
+  var KINDS = /* @__PURE__ */ new Set(["capability", "limitation"]);
+  var STATUSES = /* @__PURE__ */ new Set(["candidate", "active", "retired"]);
+  function parseCapabilityFilters(query) {
+    const agent = query.agent && query.agent.length > 0 ? query.agent : null;
+    const kind = KINDS.has(query.kind ?? "") ? query.kind : null;
+    const status = STATUSES.has(query.status ?? "") ? query.status : null;
+    return { agent, kind, status };
+  }
+  function capabilityFiltersQuery(f) {
+    const parts = [];
+    if (f.agent !== null) parts.push(`agent=${encodeURIComponent(f.agent)}`);
+    if (f.kind !== null) parts.push(`kind=${f.kind}`);
+    if (f.status !== null) parts.push(`status=${f.status}`);
+    return parts.join("&");
+  }
+  function isRecord2(v) {
+    return typeof v === "object" && v !== null;
+  }
+  function taskAgentRowsOf(data) {
+    const body = isRecord2(data) && Array.isArray(data.tasks) ? data.tasks : Array.isArray(data) ? data : [];
+    return body.filter((r) => isRecord2(r) && typeof r.agentId === "string");
+  }
+  function capRowsOf(data) {
+    const rows = Array.isArray(data) ? data : [];
+    return rows.filter((r) => isRecord2(r) && typeof r.capabilityId === "string" && typeof r.status === "string" && typeof r.agentId === "string");
+  }
+  function mountObserveCapabilitiesPage(ctx, query) {
+    let filters = parseCapabilityFilters(query);
+    let agents = [];
+    let rows = [];
+    let authFailed = false;
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    function matrixPath() {
+      const q = capabilityFiltersQuery(filters);
+      return q ? `${CAPABILITIES_BASE}?${q}` : null;
+    }
+    function render() {
+      ctx.view.innerHTML = observeCapabilitiesHtml({ agents, filters, rows, now: ctx.now() });
+    }
+    function renderAuthFailed() {
+      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    }
+    async function refresh() {
+      if (authFailed) return;
+      const [tasksRes, capsRes] = await Promise.all([
+        apiGet(TASKS_PATH2, deps),
+        apiGet(CAPABILITIES_BASE, deps)
+        // 选择器源（全量）
+      ]);
+      if (tasksRes.ok === false && tasksRes.kind === "http" && tasksRes.status === 401 || capsRes.ok === false && capsRes.kind === "http" && capsRes.status === 401) {
+        authFailed = true;
+        poller.stop();
+        renderAuthFailed();
+        return;
+      }
+      if (tasksRes.ok && capsRes.ok) {
+        agents = collectAgentIds(taskAgentRowsOf(tasksRes.data), capRowsOf(capsRes.data));
+      }
+      const path = matrixPath();
+      if (path === null) {
+        rows = capsRes.ok ? capRowsOf(capsRes.data) : rows;
+        render();
+        return;
+      }
+      const matrixRes = await apiGet(path, deps);
+      if (matrixRes.ok === false && matrixRes.kind === "http" && matrixRes.status === 401) {
+        authFailed = true;
+        poller.stop();
+        renderAuthFailed();
+        return;
+      }
+      if (matrixRes.ok) rows = capRowsOf(matrixRes.data);
+      render();
+    }
+    const poller = createPoller({ intervalMs: POLL_INTERVAL_MS5, fn: refresh, timerHost: ctx.timerHost });
+    function navigate(next) {
+      filters = { ...next };
+      const q = capabilityFiltersQuery(next);
+      location.hash = `#/observe/capabilities${q ? `?${q}` : ""}`;
+    }
+    function onClick(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-action]");
+      if (!hit) return;
+      if (hit.dataset.action === "clear-filters") navigate({ agent: null, kind: null, status: null });
+    }
+    function onChange(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-filter]");
+      if (!hit) return;
+      const key = hit.dataset.filter;
+      const value = target?.value ?? "";
+      const v = value.length > 0 ? value : null;
+      if (key === "agent") navigate({ ...filters, agent: v });
+      else if (key === "kind") navigate({ ...filters, kind: v });
+      else if (key === "status") navigate({ ...filters, status: v });
+    }
+    function onVisibility(ev) {
+      const t = ev?.target;
+      const hidden = typeof t?.hidden === "boolean" ? t.hidden : ctx.doc.hidden;
+      poller.onVisibility(!hidden);
+    }
+    ctx.view.addEventListener("click", onClick);
+    ctx.view.addEventListener("change", onChange);
+    ctx.doc.addEventListener("visibilitychange", onVisibility);
+    void refresh();
+    poller.start();
+    return {
+      destroy() {
+        ctx.view.removeEventListener("click", onClick);
+        ctx.view.removeEventListener("change", onChange);
+        ctx.doc.removeEventListener("visibilitychange", onVisibility);
+        poller.stop();
+      }
+    };
+  }
+
+  // src/portal/ui/observeEvolutionView.ts
+  function evolutionGroups(rows) {
+    return EVOLUTION_STATUSES.map((status) => ({
+      status,
+      rows: rows.filter((r) => r.status === status)
+    }));
+  }
+  function evolutionStatusBadgeHtml(status) {
+    return `<span class="badge badge--evolution-${esc(status)}"><span class="badge__dot"></span>${esc(EVOLUTION_STATUS_LABELS[status] ?? status)}</span>`;
+  }
+  function groupHtml(group) {
+    if (group.rows.length === 0) {
+      return cardHtml({ title: `${EVOLUTION_STATUS_LABELS[group.status]}（0）`, body: emptyStateHtml({ title: "本组暂无候选" }) });
+    }
+    const rows = group.rows.map((r) => {
+      const summary = truncateText(firstLine(r.proposedChange), 80);
+      return `<tr>
+      <td class="mono"><a href="#/observe/evolution/${encodeURIComponent(r.candidateId)}" title="${esc(r.candidateId)}">${esc(shortId(r.candidateId))}</a></td>
+      <td>${esc(r.agentId)}</td>
+      <td>${esc(EVOLUTION_TRIGGER_LABELS[r.trigger] ?? r.trigger)}</td>
+      <td title="${esc(firstLine(r.proposedChange))}">${esc(summary)}</td>
+      <td>${r.decidedAt ? esc(formatTimestamp(r.decidedAt)) : "—"}</td>
+    </tr>`;
+    }).join("");
+    return tableHtml({
+      caption: `${EVOLUTION_STATUS_LABELS[group.status]}（${group.rows.length}）`,
+      columns: ["候选 ID", "Agent", "触发", "变更摘要", "决议时间"],
+      rowsHtml: rows
+    });
+  }
+  function observeEvolutionHtml(rows) {
+    const header = pageHeaderHtml({ view: "observe-evolution", title: "观测·女娲·演进" });
+    if (rows.length === 0) {
+      return `${observeTabsHtml("observe-evolution")}${header}${cardHtml({ title: "演进候选（只读）", body: emptyStateHtml({ title: "暂无演进候选", hint: "候选由 CLI 惰性聚合生成（门户读面零写入，D-48）" }) })}`;
+    }
+    const groups = evolutionGroups(rows).map(groupHtml).join("");
+    return `${observeTabsHtml("observe-evolution")}${header}${groups}`;
+  }
+  function observeEvolutionDetailHtml(m) {
+    const r = m.row;
+    const title = `观测·女娲·演进·详情（${shortId(r.candidateId)}）`;
+    const header = pageHeaderHtml({ view: "observe-evolution-detail", title });
+    const zone1 = cardHtml({
+      title: "状态",
+      body: `<div class="detail-head"><code class="mono">${esc(r.candidateId)}</code>${evolutionStatusBadgeHtml(r.status)}</div>`
+    });
+    const zone2 = cardHtml({
+      title: "触发与创建",
+      body: `<dl class="kv-grid">
+      <div class="kv"><dt>触发</dt><dd>${esc(EVOLUTION_TRIGGER_LABELS[r.trigger] ?? r.trigger)}</dd></div>
+      <div class="kv"><dt>创建时间</dt><dd>${esc(formatTimestamp(r.createdAt))}</dd></div>
+    </dl>`
+    });
+    const zone3 = cardHtml({
+      title: "提议变更（全文）",
+      body: `<pre class="code-block"><code>${esc(r.proposedChange ?? "")}</code></pre>`
+    });
+    const zone4 = m.evidenceRefs.length === 0 ? cardHtml({ title: "证据引用", body: emptyStateHtml({ title: "无证据引用" }) }) : cardHtml({
+      title: "证据引用（点击跳夔牛·证据）",
+      body: `<ul class="feed">${m.evidenceRefs.map((e) => `<li class="feed-item"><span class="feed-item__time">${esc(formatTimestamp(e.occurredAt))}</span><a class="mono" href="#/observe/evidence?ref=${encodeURIComponent(taskEvidenceRef(e.taskId))}" title="${esc(taskEvidenceRef(e.taskId))}">${esc(shortId(e.taskId))}</a><span class="hint">${esc(e.subClass)}</span></li>`).join("")}</ul>`
+    });
+    const zone5 = cardHtml({
+      title: "决定信息",
+      body: r.decidedAt ? `<dl class="kv-grid"><div class="kv"><dt>决议时间</dt><dd>${esc(formatTimestamp(r.decidedAt))}</dd></div><div class="kv"><dt>决议人</dt><dd>${esc(r.decidedBy ?? "—")}</dd></div></dl>` : '<p class="hint">尚未决策（confirm/dismiss 属后续批次，本页只读）</p>'
+    });
+    const back = '<p><a class="btn btn--secondary" href="#/observe/evolution">返回演进列表</a></p>';
+    return `${observeTabsHtml("observe-evolution-detail")}${header}${zone1}${zone2}${zone3}${zone4}${zone5}${back}`;
+  }
+
+  // src/portal/ui/observeEvolutionPage.ts
+  var POLL_INTERVAL_MS6 = 1e4;
+  function isRecord3(v) {
+    return typeof v === "object" && v !== null;
+  }
+  function rowsOf(data) {
+    const rows = Array.isArray(data) ? data : [];
+    return rows.filter((r) => isRecord3(r) && typeof r.candidateId === "string" && typeof r.status === "string");
+  }
+  function mountObserveEvolutionPage(ctx) {
+    let rows = [];
+    let authFailed = false;
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    function render() {
+      ctx.view.innerHTML = observeEvolutionHtml(rows);
+    }
+    function renderAuthFailed() {
+      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    }
+    async function refresh() {
+      if (authFailed) return;
+      const res = await apiGet("/api/evolution", deps);
+      if (!res.ok && res.kind === "http" && res.status === 401) {
+        authFailed = true;
+        poller.stop();
+        renderAuthFailed();
+        return;
+      }
+      if (res.ok) {
+        rows = rowsOf(res.data);
+        render();
+      }
+    }
+    const poller = createPoller({ intervalMs: POLL_INTERVAL_MS6, fn: refresh, timerHost: ctx.timerHost });
+    function onVisibility(ev) {
+      const t = ev?.target;
+      const hidden = typeof t?.hidden === "boolean" ? t.hidden : ctx.doc.hidden;
+      poller.onVisibility(!hidden);
+    }
+    ctx.doc.addEventListener("visibilitychange", onVisibility);
+    void refresh();
+    poller.start();
+    return {
+      destroy() {
+        ctx.doc.removeEventListener("visibilitychange", onVisibility);
+        poller.stop();
+      }
+    };
+  }
+
+  // src/portal/ui/observeEvolutionDetailPage.ts
+  function isRecord4(v) {
+    return typeof v === "object" && v !== null;
+  }
+  function mountObserveEvolutionDetailPage(ctx, id) {
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    let settled = false;
+    function renderError(failure) {
+      const code = failure.kind === "http" ? `<span class="error-state__code">${failure.code}</span>` : "";
+      ctx.view.innerHTML = `<div class="error-state" role="alert">${code}<p class="error-state__message">${explainFailure(failure)}</p></div><p><a class="btn btn--secondary" href="#/observe/evolution">返回演进列表</a></p>`;
+    }
+    void (async () => {
+      const res = await apiGet(`/api/evolution/${encodeURIComponent(id)}`, deps);
+      if (settled) return;
+      if (!res.ok) {
+        renderError(res);
+        return;
+      }
+      const data = res.data;
+      if (!isRecord4(data) || typeof data.candidateId !== "string") {
+        renderError({ ok: false, kind: "http", status: 0, code: "unknown", message: "响应形状异常" });
+        return;
+      }
+      const row = {
+        candidateId: String(data.candidateId),
+        agentId: typeof data.agentId === "string" ? data.agentId : "",
+        trigger: typeof data.trigger === "string" ? data.trigger : "",
+        status: typeof data.status === "string" ? data.status : "",
+        proposedChange: typeof data.proposedChange === "string" ? data.proposedChange : null,
+        createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
+        decidedAt: typeof data.decidedAt === "string" ? data.decidedAt : null,
+        decidedBy: typeof data.decidedBy === "string" ? data.decidedBy : null
+      };
+      const evidenceRefs = parseEvolutionEvidenceRefs(typeof data.evidenceRefs === "string" ? data.evidenceRefs : null);
+      ctx.view.innerHTML = observeEvolutionDetailHtml({ row, evidenceRefs });
+    })();
+    return {
+      destroy() {
+        settled = true;
+      }
+    };
+  }
+
+  // src/portal/ui/observeEvidenceView.ts
+  function searchCardHtml(s) {
+    const notice = s.emptyInput ? '<p class="input-error" role="alert">请输入证据引用（ref，格式 kind:id）</p>' : "";
+    return cardHtml({
+      title: "按引用查询（唯一数据源 GET /api/evidence/:ref，无证据列表端点）",
+      body: `<form class="evidence-form" data-role="evidence-form">
+      <input class="filter__search mono" type="search" placeholder="如 task:task-0a1b2c3d（kind:id）" value="${esc(s.inputValue)}" data-role="evidence-input" />
+      ${buttonHtml("查询", "primary", 'data-action="evidence-search"')}
+    </form>${notice}
+    <p class="hint">入口：本页输入 / 任务详情证据区链接 / 演进详情证据链接（?ref= 直落支持）</p>`
+    });
+  }
+  function resultHtml(s) {
+    const r = s.result;
+    const pretty = prettyJson(r.payload);
+    const collapsed = pretty.length > EVIDENCE_PAYLOAD_COLLAPSE_CHARS && !s.payloadExpanded;
+    const payloadBlock = collapsed ? `<pre class="code-block code-block--collapsed"><code>${esc(pretty.slice(0, EVIDENCE_PAYLOAD_COLLAPSE_CHARS))}…</code></pre><button type="button" class="btn btn--ghost btn--sm" data-action="expand-payload">展开全部</button>` : `<pre class="code-block"><code>${esc(pretty)}</code></pre>`;
+    const copiedNote = s.copied ? '<span class="hint">已复制</span>' : s.copyFailed ? '<span class="hint hint--error">复制失败（浏览器剪贴板不可用或未授权）——请手动选中复制</span>' : "";
+    return cardHtml({
+      title: "证据详情",
+      body: `<dl class="kv-grid">
+      <div class="kv"><dt>引用</dt><dd><code class="mono">${esc(r.ref)}</code><button type="button" class="btn btn--ghost btn--sm" data-action="copy-ref" data-ref="${esc(r.ref)}">复制</button>${copiedNote}</dd></div>
+      <div class="kv"><dt>类型</dt><dd>${esc(r.kind)}</dd></div>
+      <div class="kv"><dt>状态</dt><dd>${esc(r.status)}</dd></div>
+      <div class="kv"><dt>发生时间</dt><dd>${esc(formatTimestamp(r.occurredAt))}</dd></div>
+      <div class="kv"><dt>摘要</dt><dd class="mono" title="${esc(r.digest)}">${esc(digestHead(r.digest))}</dd></div>
+    </dl>
+    <p class="hint">payload（JSON 美化${pretty.length > EVIDENCE_PAYLOAD_COLLAPSE_CHARS ? `，${pretty.length} 字符默认折叠` : ""}）</p>
+    ${payloadBlock}`
+    });
+  }
+  function observeEvidenceHtml(s) {
+    const header = pageHeaderHtml({ view: "observe-evidence", title: "观测·夔牛·证据" });
+    const toast = s.errorText ? toastHtml(`${s.errorText}${s.errorCode ? `（${s.errorCode}）` : ""}`, "error") : "";
+    const errorBar = s.errorText ? `<div class="error-state" role="alert">${s.errorCode ? `<span class="error-state__code">${esc(s.errorCode)}</span>` : ""}<p class="error-state__message">${esc(s.errorText)}</p></div>` : "";
+    const result = s.result ? resultHtml(s) : s.errorText ? "" : cardHtml({ title: "查询结果", body: emptyStateHtml({ title: "尚未查询", hint: "输入证据引用（ref）后回车或点击查询" }) });
+    return `${observeTabsHtml("observe-evidence")}${header}${toast}${searchCardHtml(s)}${errorBar}${result}`;
+  }
+
+  // src/portal/ui/observeEvidencePage.ts
+  function isRecord5(v) {
+    return typeof v === "object" && v !== null;
+  }
+  function resultRowOf(data) {
+    if (!isRecord5(data) || typeof data.ref !== "string" || typeof data.digest !== "string") return null;
+    return {
+      ref: data.ref,
+      kind: typeof data.kind === "string" ? data.kind : "",
+      status: typeof data.status === "string" ? data.status : "",
+      occurredAt: typeof data.occurredAt === "string" ? data.occurredAt : "",
+      digest: data.digest,
+      payload: typeof data.payload === "string" ? data.payload : ""
+    };
+  }
+  function mountObserveEvidencePage(ctx, query) {
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    const state = {
+      inputValue: query.ref ?? "",
+      lastQuery: "",
+      result: null,
+      emptyInput: false,
+      errorText: null,
+      errorCode: null,
+      copied: false,
+      copyFailed: false,
+      payloadExpanded: false,
+      loading: false
+    };
+    function render() {
+      ctx.view.innerHTML = observeEvidenceHtml(state);
+    }
+    async function lookup(rawRef) {
+      const ref = rawRef.trim();
+      state.inputValue = ref;
+      state.copied = false;
+      state.copyFailed = false;
+      state.payloadExpanded = false;
+      if (ref.length === 0) {
+        state.emptyInput = true;
+        state.errorText = null;
+        state.errorCode = null;
+        render();
+        return;
+      }
+      state.emptyInput = false;
+      state.lastQuery = ref;
+      state.loading = true;
+      render();
+      const res = await apiGet(`/api/evidence/${encodeURIComponent(ref)}`, deps);
+      state.loading = false;
+      if (res.ok) {
+        const row = resultRowOf(res.data);
+        if (row) {
+          state.result = row;
+          state.errorText = null;
+          state.errorCode = null;
+        } else {
+          state.result = null;
+          state.errorText = "响应形状异常（缺 ref/digest 键）";
+          state.errorCode = "unknown";
+        }
+      } else {
+        const failure = res;
+        state.result = null;
+        state.errorText = explainFailure(failure);
+        state.errorCode = failure.kind === "http" ? failure.code : null;
+      }
+      render();
+    }
+    function onSubmit(ev) {
+      ev.preventDefault();
+      const value = ev.target?.value;
+      if (typeof value === "string" && value.length > 0) {
+        state.inputValue = value;
+        void lookup(value);
+        return;
+      }
+      void lookup(state.inputValue);
+    }
+    function onInput(ev) {
+      const value = ev.target?.value;
+      if (typeof value === "string") state.inputValue = value;
+    }
+    function onClick(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-action]");
+      if (!hit) return;
+      const action = hit.dataset.action;
+      if (action === "evidence-search") {
+        void lookup(state.inputValue);
+      } else if (action === "copy-ref") {
+        const ref = hit.dataset.ref ?? "";
+        state.copyFailed = false;
+        state.copied = false;
+        const nav = globalThis.navigator;
+        const p = nav?.clipboard?.writeText?.(ref);
+        if (p && typeof p.then === "function") {
+          void p.then(() => {
+            state.copied = true;
+            render();
+          }, () => {
+            state.copyFailed = true;
+            render();
+          });
+        } else {
+          state.copyFailed = true;
+          render();
+        }
+      } else if (action === "expand-payload") {
+        state.payloadExpanded = true;
+        render();
+      }
+    }
+    ctx.view.addEventListener("submit", onSubmit);
+    ctx.view.addEventListener("input", onInput);
+    ctx.view.addEventListener("click", onClick);
+    render();
+    if (query.ref && query.ref.length > 0) void lookup(query.ref);
+    return {
+      destroy() {
+        ctx.view.removeEventListener("submit", onSubmit);
+        ctx.view.removeEventListener("input", onInput);
+        ctx.view.removeEventListener("click", onClick);
+      }
+    };
+  }
+
   // src/portal/ui/main.ts
   var APP_VERSION = true ? "0.1.0" : "";
   var DEFAULT_TIMER_HOST = {
@@ -1496,6 +2337,21 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
           break;
         case "approval-detail":
           activePage = mountApprovalDetailPage(ctx, route.id);
+          break;
+        case "observe":
+          activePage = mountObserveOverviewPage(ctx);
+          break;
+        case "observe-capabilities":
+          activePage = mountObserveCapabilitiesPage(ctx, query);
+          break;
+        case "observe-evolution":
+          activePage = mountObserveEvolutionPage(ctx);
+          break;
+        case "observe-evolution-detail":
+          activePage = mountObserveEvolutionDetailPage(ctx, route.id);
+          break;
+        case "observe-evidence":
+          activePage = mountObserveEvidencePage(ctx, query);
           break;
         default:
           activePage = null;

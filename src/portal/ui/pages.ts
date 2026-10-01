@@ -1,6 +1,7 @@
-// 第七阶段批次一（7-1/4）骨架 + 批次二（7-2/4）任务/审批页接线（设计 V0.3 §3.3 路由与视图契约）。
-// 7-2 四页（tasks/task-detail/approvals/approval-detail）由页面控制器挂载（数据到达后重渲染内容区）；
-// 观测族与 Agent 族页面维持「建设中」占位（批次 7-3 / 7-4 交付）；观测族带二级页签（FR-G-2）。
+// 第七阶段批次一（7-1/4）骨架 + 批次二（7-2/4）任务/审批页 + 批次三（7-3/4）观测族接线
+//（设计 V0.3 §3.3 路由与视图契约）。
+// 7-2/7-3 数据页由页面控制器挂载（数据到达后重渲染内容区，控制器 HTML 自带页签/页头）；
+// Agent 族页面维持「建设中」占位（批次 7-4 交付）。
 
 import { OBSERVE_TABS, activeObserveTabKey } from './nav.js';
 import type { PortalUiRoute } from './routes.js';
@@ -8,11 +9,6 @@ import { cardHtml, emptyStateHtml, esc, loadingStateHtml, pageHeaderHtml } from 
 import { shortId } from './format.js';
 
 const BATCH_HINTS: Partial<Record<PortalUiRoute['view'], string>> = {
-  'observe': '总控统计卡 + 合并时间线 + 快速入口由批次 7-3 交付',
-  'observe-capabilities': '白泽·能力矩阵（Agent 选择器/筛选）由批次 7-3 交付',
-  'observe-evolution': '女娲·演进候选列表（状态分组/详情侧栏，整页只读）由批次 7-3 交付',
-  'observe-evolution-detail': '演进候选详情五区由批次 7-3 交付',
-  'observe-evidence': '夔牛·证据按 ref 直查由批次 7-3 交付',
   'agents': 'Agent 目录（前端去重聚合）由批次 7-4 交付',
   'agent-detail': 'Agent 详情四读面（card/trend/insight/report）由批次 7-4 交付',
 };
@@ -71,15 +67,15 @@ export function renderContent(route: PortalUiRoute, query: Record<string, string
     case 'approval-detail':
       return loadingPage('approval-detail', { id: route.id });
     case 'observe':
-      return `${observeTabsHtml('observe')}${placeholderPage('observe')}`;
+      return `${observeTabsHtml('observe')}${loadingPage('observe')}`;
     case 'observe-capabilities':
-      return `${observeTabsHtml('observe-capabilities')}${placeholderPage('observe-capabilities')}`;
+      return `${observeTabsHtml('observe-capabilities')}${loadingPage('observe-capabilities')}`;
     case 'observe-evolution':
-      return `${observeTabsHtml('observe-evolution')}${placeholderPage('observe-evolution')}`;
+      return `${observeTabsHtml('observe-evolution')}${loadingPage('observe-evolution')}`;
     case 'observe-evolution-detail':
-      return `${observeTabsHtml('observe-evolution-detail')}${placeholderPage('observe-evolution-detail', { id: route.id })}`;
+      return `${observeTabsHtml('observe-evolution-detail')}${loadingPage('observe-evolution-detail', { id: route.id })}`;
     case 'observe-evidence':
-      return `${observeTabsHtml('observe-evidence')}${placeholderPage('observe-evidence')}`;
+      return `${observeTabsHtml('observe-evidence')}${loadingPage('observe-evidence')}`;
     case 'agents':
       return placeholderPage('agents');
     case 'agent-detail':

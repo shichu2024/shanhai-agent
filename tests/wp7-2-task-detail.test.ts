@@ -193,7 +193,8 @@ describe('7-2 mountTaskDetailPage（三读面 + 3s 轮询终态停止）', () =>
     const fetchImpl = vi.fn(async (path: string) => {
       calls.push(path);
       if (path.endsWith('/events')) return jsonResponse(events);
-      if (path.endsWith('/evidence')) return jsonResponse({ ok: true, refs: [{ ref: 'task:x', kind: 'attempt' }] });
+      // 7-3 随批迁移：mock 对齐 TaskEvidenceChain 实测形状（真实端点无 refs 键，前端经 evidenceRowsOf 派生）
+      if (path.endsWith('/evidence')) return jsonResponse({ ok: true, taskId: 'task-aaaabbbbccccdddd', trace: { eventIds: ['evt-11112222'] }, failures: [{ recordId: 'rec-1', subClass: 'x', occurredAt: '2026-10-01T10:00:00.000Z' }], memories: [] });
       if (path.startsWith('/api/tasks?limit=100')) return jsonResponse({ tasks: [{ taskId: 'task-child0001', status: 'queued', agentId: 'ag-1', createdAt: '2026-10-01T10:00:00.000Z', endedAt: null, attemptCount: 0, modelCallCount: 0, tokensUsed: 0, parentTaskId: 'task-aaaabbbbccccdddd' }], total: 1 });
       return jsonResponse(current);
     });
@@ -222,7 +223,7 @@ describe('7-2 mountTaskDetailPage（三读面 + 3s 轮询终态停止）', () =>
     const fetchImpl = vi.fn(async (path: string, init?: RequestInit) => {
       if (init?.method === 'POST') return jsonResponse({ ok: true, taskId: 'task-aaaabbbbccccdddd', spawned: true, resumedBy: 'manual-resume', pid: 9, logFile: '/d/resume-x.log' });
       if (path.endsWith('/events')) return jsonResponse([]);
-      if (path.endsWith('/evidence')) return jsonResponse({ ok: true, refs: [] });
+      if (path.endsWith('/evidence')) return jsonResponse({ ok: true, taskId: 'task-aaaabbbbccccdddd', trace: { eventIds: [] }, failures: [], memories: [] });
       if (path.startsWith('/api/tasks?limit=100')) return jsonResponse({ tasks: [], total: 0 });
       return jsonResponse(taskRow);
     });

@@ -36,6 +36,36 @@ export interface EvidenceRefRow {
   kind: string;
 }
 
+/**
+ * FR-TD-5/FR-O-4 入口②（7-3 随批修复）：`GET /api/tasks/:id/evidence` 实测返回
+ * TaskEvidenceChain（evidenceStore.taskEvidence：ok/taskId/envelope/status/trace.eventIds/
+ * failures[].recordId/memories[].memoryId/delegationChain），无 refs 列表键——
+ * 据实派生证据 ref 行：task:<taskId> + trace_event:<eventId> + failure:<recordId> + memory:<memoryId>。
+ */
+export function evidenceRowsOf(data: unknown): EvidenceRefRow[] {
+  if (typeof data !== 'object' || data === null) return [];
+  const chain = data as Record<string, unknown>;
+  const rows: EvidenceRefRow[] = [];
+  if (typeof chain.taskId === 'string' && chain.taskId.length > 0) rows.push({ ref: `task:${chain.taskId}`, kind: 'task' });
+  const trace = typeof chain.trace === 'object' && chain.trace !== null && Array.isArray((chain.trace as { eventIds?: unknown }).eventIds)
+    ? (chain.trace as { eventIds: unknown[] }).eventIds
+    : [];
+  for (const e of trace) {
+    if (typeof e === 'string' && e.length > 0) rows.push({ ref: `trace_event:${e}`, kind: 'trace_event' });
+  }
+  for (const f of Array.isArray(chain.failures) ? chain.failures : []) {
+    if (typeof f === 'object' && f !== null && typeof (f as { recordId?: unknown }).recordId === 'string') {
+      rows.push({ ref: `failure:${(f as { recordId: string }).recordId}`, kind: 'failure' });
+    }
+  }
+  for (const m of Array.isArray(chain.memories) ? chain.memories : []) {
+    if (typeof m === 'object' && m !== null && typeof (m as { memoryId?: unknown }).memoryId === 'string') {
+      rows.push({ ref: `memory:${(m as { memoryId: string }).memoryId}`, kind: 'memory' });
+    }
+  }
+  return rows;
+}
+
 export interface ChildTaskRow {
   taskId: string;
   status: string;
