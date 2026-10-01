@@ -48,8 +48,8 @@ export function buttonHtml(label: string, kind: 'primary' | 'secondary' | 'dange
 
 // ---------- 空态 / 错误态 / 加载态 / 骨架屏 ----------
 
-export function emptyStateHtml(opts: { title: string; hint?: string; actionLabel?: string }): string {
-  const action = opts.actionLabel ? `<button type="button" class="btn btn--primary">${esc(opts.actionLabel)}</button>` : '';
+export function emptyStateHtml(opts: { title: string; hint?: string; actionLabel?: string; actionAttrs?: string }): string {
+  const action = opts.actionLabel ? `<button type="button" class="btn btn--primary"${opts.actionAttrs ? ` ${opts.actionAttrs}` : ''}>${esc(opts.actionLabel)}</button>` : '';
   const hint = opts.hint ? `<p class="empty-state__hint">${esc(opts.hint)}</p>` : '';
   return `<div class="empty-state"><div class="empty-state__icon" aria-hidden="true"></div><p class="empty-state__title">${esc(opts.title)}</p>${hint}${action}</div>`;
 }

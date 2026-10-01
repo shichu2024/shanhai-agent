@@ -1,18 +1,13 @@
-// 第七阶段批次一（7-1/4）：骨架页内容（设计 V0.3 §3.3 路由与视图契约）。
-// 本批交付全局框架与路由骨架：各页内容区为「建设中」占位（批次 7-2 任务与审批读写流 /
-// 7-3 观测面 / 7-4 Agent 目录与详情逐批填充）；观测族页面带二级页签（FR-G-2：页签切换
-// 不整页刷新——hash 变更仅重渲染内容区）。
+// 第七阶段批次一（7-1/4）骨架 + 批次二（7-2/4）任务/审批页接线（设计 V0.3 §3.3 路由与视图契约）。
+// 7-2 四页（tasks/task-detail/approvals/approval-detail）由页面控制器挂载（数据到达后重渲染内容区）；
+// 观测族与 Agent 族页面维持「建设中」占位（批次 7-3 / 7-4 交付）；观测族带二级页签（FR-G-2）。
 
 import { OBSERVE_TABS, activeObserveTabKey } from './nav.js';
 import type { PortalUiRoute } from './routes.js';
-import { cardHtml, emptyStateHtml, esc, pageHeaderHtml } from './components.js';
+import { cardHtml, emptyStateHtml, esc, loadingStateHtml, pageHeaderHtml } from './components.js';
 import { shortId } from './format.js';
 
 const BATCH_HINTS: Partial<Record<PortalUiRoute['view'], string>> = {
-  'tasks': '任务列表（统计卡/筛选/搜索/分页）由批次 7-2 交付',
-  'task-detail': '任务详情（头部/时间线/事件流/证据区/关联区/操作区）由批次 7-2 交付',
-  'approvals': '审批待办列表（重排/筛选/倒计时）由批次 7-2 交付',
-  'approval-detail': '审批详情（影响范围/决议操作/参数摘要区）由批次 7-2 交付',
   'observe': '总控统计卡 + 合并时间线 + 快速入口由批次 7-3 交付',
   'observe-capabilities': '白泽·能力矩阵（Agent 选择器/筛选）由批次 7-3 交付',
   'observe-evolution': '女娲·演进候选列表（状态分组/详情侧栏，整页只读）由批次 7-3 交付',
@@ -59,16 +54,22 @@ function placeholderPage(view: PortalUiRoute['view'], opts?: { id?: string }): s
   return `${pageHeaderHtml({ view, title })}${body}`;
 }
 
+/** 7-2 数据页初始壳：页头 + 加载态（控制器 fetch 后重渲染内容区） */
+function loadingPage(view: PortalUiRoute['view'], opts?: { id?: string }): string {
+  const title = opts?.id ? detailTitle(view, opts.id) : PAGE_TITLES[view]!;
+  return `${pageHeaderHtml({ view, title })}${loadingStateHtml()}`;
+}
+
 export function renderContent(route: PortalUiRoute, query: Record<string, string>): string {
   switch (route.view) {
     case 'tasks':
-      return placeholderPage('tasks');
+      return loadingPage('tasks');
     case 'task-detail':
-      return placeholderPage('task-detail', { id: route.id });
+      return loadingPage('task-detail', { id: route.id });
     case 'approvals':
-      return placeholderPage('approvals');
+      return loadingPage('approvals');
     case 'approval-detail':
-      return placeholderPage('approval-detail', { id: route.id });
+      return loadingPage('approval-detail', { id: route.id });
     case 'observe':
       return `${observeTabsHtml('observe')}${placeholderPage('observe')}`;
     case 'observe-capabilities':
