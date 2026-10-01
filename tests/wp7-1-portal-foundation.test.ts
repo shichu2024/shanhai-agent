@@ -544,14 +544,15 @@ describe('7-1 pages.renderContent（骨架页）', () => {
     }
   });
 
-  it('详情路由（7-2/7-3 已交付 / 7-4 交付）均有初始壳而非死链', () => {
+  it('详情路由（7-2/7-3/7-4 已交付）均有初始壳而非死链（随批契约迁移：agents 族由 7-4 交付，占位断言移除）', () => {
     for (const hash of ['#/tasks/t-1', '#/approvals/r-1', '#/observe/evolution/c-1']) {
       const html = renderContent(parseHash(hash).route, {});
       expect(html).toContain('加载中');
     }
     for (const hash of ['#/agents', '#/agents/ag-1']) {
       const html = renderContent(parseHash(hash).route, {});
-      expect(html).toContain('建设中');
+      expect(html).toContain('加载中');
+      expect(html).not.toContain('建设中'); // 7-4 收官：全站无「建设中」占位页
     }
   });
 

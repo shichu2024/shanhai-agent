@@ -175,7 +175,7 @@ describe('7-1 shell boot（FR-G 全局框架接线）', () => {
   });
 
   it('连接指示探针：带 Token 请求 GET /api/tasks?limit=1 携 Authorization；成功→已连接；连续 2 次网络失败→重连中（§11-3）', async () => {
-    stubGlobals('#/agents'); // 占位页（7-4 交付）无数据控制器——探针为唯一 fetch 源（随批迁移：#/observe 已由 7-3 挂总控控制器）
+    stubGlobals('#/nope'); // not-found 无数据控制器——探针为唯一 fetch 源（随批迁移：#/agents 已由 7-4 挂目录控制器，#/observe 已由 7-3 挂总控控制器）
     const shell = stubDocument();
     shell.reg('view');
     const conn = shell.reg('connection-indicator');
@@ -205,7 +205,7 @@ describe('7-1 shell boot（FR-G 全局框架接线）', () => {
   });
 
   it('无 Token 时探针不发请求，指示为未认证提示', async () => {
-    stubGlobals('#/agents'); // 占位页（7-4 交付）无数据控制器（随批迁移：#/observe 已由 7-3 挂总控控制器）
+    stubGlobals('#/nope'); // not-found 无数据控制器（随批迁移：#/agents 已由 7-4 挂目录控制器）
     const shell = stubDocument();
     shell.reg('view');
     const conn = shell.reg('connection-indicator');

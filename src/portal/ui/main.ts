@@ -27,6 +27,7 @@ import { mountObserveCapabilitiesPage } from './observeCapabilitiesPage.js';
 import { mountObserveEvolutionPage } from './observeEvolutionPage.js';
 import { mountObserveEvolutionDetailPage } from './observeEvolutionDetailPage.js';
 import { mountObserveEvidencePage } from './observeEvidencePage.js';
+import { mountAgentsPage, mountAgentDetailPage } from './agentsPage.js';
 
 declare const __PORTAL_APP_VERSION__: string;
 
@@ -135,6 +136,8 @@ export function boot(opts: BootOptions = {}): void {
       case 'observe-evolution': activePage = mountObserveEvolutionPage(ctx); break;
       case 'observe-evolution-detail': activePage = mountObserveEvolutionDetailPage(ctx, route.id); break;
       case 'observe-evidence': activePage = mountObserveEvidencePage(ctx, query); break;
+      case 'agents': activePage = mountAgentsPage(ctx); break;
+      case 'agent-detail': activePage = mountAgentDetailPage(ctx, route.id, query); break;
       default: activePage = null; break;
     }
   }

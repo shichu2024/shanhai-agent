@@ -267,10 +267,6 @@
   }
 
   // src/portal/ui/pages.ts
-  var BATCH_HINTS = {
-    "agents": "Agent 目录（前端去重聚合）由批次 7-4 交付",
-    "agent-detail": "Agent 详情四读面（card/trend/insight/report）由批次 7-4 交付"
-  };
   var PAGE_TITLES = {
     "tasks": "任务列表",
     "task-detail": "任务详情",
@@ -294,14 +290,6 @@
       return `<a class="tab${isActive ? " active" : ""}" href="${t.hash}"${isActive ? ' aria-current="page"' : ""}>${esc(t.label)}</a>`;
     }).join("");
     return `<nav class="tabs" aria-label="观测二级导航">${tabs}</nav>`;
-  }
-  function placeholderPage(view, opts) {
-    const title = opts?.id ? detailTitle(view, opts.id) : PAGE_TITLES[view];
-    const body = cardHtml({
-      title: "骨架预览",
-      body: emptyStateHtml({ title: "建设中", hint: BATCH_HINTS[view] ?? "本页面内容由后续批次交付" })
-    });
-    return `${pageHeaderHtml({ view, title })}${body}`;
   }
   function loadingPage(view, opts) {
     const title = opts?.id ? detailTitle(view, opts.id) : PAGE_TITLES[view];
@@ -328,9 +316,9 @@
       case "observe-evidence":
         return `${observeTabsHtml("observe-evidence")}${loadingPage("observe-evidence")}`;
       case "agents":
-        return placeholderPage("agents");
+        return loadingPage("agents");
       case "agent-detail":
-        return placeholderPage("agent-detail", { id: route.id });
+        return loadingPage("agent-detail", { id: route.id });
       case "not-found":
         return `<div class="error-state" role="alert"><p class="error-state__message">未找到视图：${esc(route.hash)}</p><a class="btn btn--primary" href="#/tasks">返回首页</a></div>`;
     }
@@ -2260,6 +2248,466 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
     };
   }
 
+  // src/portal/ui/agentsData.ts
+  function isRecord6(v) {
+    return typeof v === "object" && v !== null;
+  }
+  function agentCatalogRows(tasks, capabilities) {
+    const counts = /* @__PURE__ */ new Map();
+    const rowOf = (agentId) => {
+      let row = counts.get(agentId);
+      if (!row) {
+        row = { agentId, candidate: 0, active: 0, retired: 0 };
+        counts.set(agentId, row);
+      }
+      return row;
+    };
+    for (const t of tasks) rowOf(t.agentId);
+    for (const c of capabilities) {
+      const row = rowOf(c.agentId);
+      if (c.status === "candidate" || c.status === "active" || c.status === "retired") row[c.status] += 1;
+    }
+    return [...counts.values()].sort((a, b) => a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0);
+  }
+  function stringArrayOf(v) {
+    return Array.isArray(v) ? v.filter((s) => typeof s === "string") : [];
+  }
+  function contractOf(v) {
+    if (!isRecord6(v) || typeof v.digest !== "string" || typeof v.type !== "string") return null;
+    return { digest: v.digest, type: v.type };
+  }
+  function jsonOrDash(v) {
+    return v === null || v === void 0 ? "—" : prettyJson(JSON.stringify(v));
+  }
+  function cardUiOf(data) {
+    if (!isRecord6(data)) return null;
+    if (typeof data.agentId !== "string" || typeof data.versionId !== "string") return null;
+    if (!Array.isArray(data.tools)) return null;
+    const input = contractOf(data.inputContract);
+    const output = contractOf(data.outputContract);
+    if (input === null || output === null) return null;
+    const mission = isRecord6(data.mission) ? stringArrayOf(data.mission.responsibilities) : [];
+    const tools = data.tools.filter(
+      (t) => isRecord6(t) && typeof t.toolId === "string" && typeof t.riskLevel === "string"
+    );
+    return {
+      agentId: data.agentId,
+      versionId: data.versionId,
+      specVersion: typeof data.specVersion === "string" ? data.specVersion : "",
+      contentHash: typeof data.contentHash === "string" ? data.contentHash : "",
+      mission,
+      nonGoals: stringArrayOf(data.nonGoals),
+      tools,
+      inputContract: input,
+      outputContract: output,
+      budgetsJson: jsonOrDash(data.budgets),
+      approvalJson: jsonOrDash(data.approvalPolicy),
+      evolutionJson: jsonOrDash(data.evolutionPolicy)
+    };
+  }
+  function entryOf(v) {
+    if (!isRecord6(v) || typeof v.capabilityId !== "string" || typeof v.kind !== "string") return null;
+    if (typeof v.statement !== "string" || typeof v.origin !== "string") return null;
+    return {
+      capabilityId: v.capabilityId,
+      kind: v.kind,
+      statement: v.statement,
+      origin: v.origin,
+      evidenceCount: typeof v.evidenceCount === "number" ? v.evidenceCount : 0
+    };
+  }
+  function insightUiOf(data) {
+    if (!isRecord6(data) || !isRecord6(data.assertions) || !isRecord6(data.behavior)) return null;
+    if (!isRecord6(data.declared) || typeof data.generatedAt !== "string") return null;
+    const active = data.assertions.active;
+    if (!isRecord6(active) || !isRecord6(active.counts) || !Array.isArray(active.entries)) return null;
+    const open = data.assertions.openCandidates;
+    if (!isRecord6(open) || typeof open.total !== "number" || typeof open.evidencePending !== "number") return null;
+    return {
+      generatedAt: data.generatedAt,
+      versionId: typeof data.versionId === "string" ? data.versionId : "",
+      declared: data.declared,
+      activeCounts: {
+        capability: typeof active.counts.capability === "number" ? active.counts.capability : 0,
+        limitation: typeof active.counts.limitation === "number" ? active.counts.limitation : 0
+      },
+      activeEntries: active.entries.map(entryOf).filter((e) => e !== null),
+      openCandidates: { total: open.total, evidencePending: open.evidencePending },
+      emptyHint: typeof data.assertions.emptyHint === "string" ? data.assertions.emptyHint : null,
+      behaviorSince: typeof data.behavior.since === "string" ? data.behavior.since : "",
+      behaviorStatus: typeof data.behavior.status === "string" ? data.behavior.status : "",
+      behaviorInsufficientNote: typeof data.behavior.insufficientNote === "string" ? data.behavior.insufficientNote : null
+    };
+  }
+  function trendSummaryOf(trend) {
+    const latest = trend.buckets.length > 0 ? trend.buckets[trend.buckets.length - 1] : null;
+    const latestTasks = latest !== null && isRecord6(latest.tasks) ? latest.tasks : null;
+    const rate = latestTasks !== null ? latestTasks.contractPassRate : void 0;
+    return {
+      agentId: trend.agentId,
+      bucket: trend.bucket,
+      bucketCount: trend.buckets.length,
+      hasData: trend.buckets.length > 0,
+      latestKey: latest !== null && typeof latest.key === "string" ? latest.key : null,
+      latestRateLabel: latest === null ? "—" : typeof rate === "number" ? rate.toFixed(3) : "—（无分母不假装）"
+    };
+  }
+  function trendBarsOf(buckets) {
+    const rows = buckets.filter(isRecord6).map((b) => {
+      const tasks = isRecord6(b.tasks) ? b.tasks : {};
+      return {
+        key: typeof b.key === "string" ? b.key : "",
+        total: typeof tasks.total === "number" ? tasks.total : 0,
+        succeeded: typeof tasks.succeeded === "number" ? tasks.succeeded : 0,
+        excludedCancelled: typeof tasks.excludedCancelled === "number" ? tasks.excludedCancelled : 0,
+        contractFailures: typeof tasks.contractFailures === "number" ? tasks.contractFailures : 0,
+        rate: tasks.contractPassRate
+      };
+    });
+    const max = rows.reduce((m, r) => Math.max(m, r.total), 0);
+    return rows.map((r) => ({
+      key: r.key,
+      total: r.total,
+      succeeded: r.succeeded,
+      excludedCancelled: r.excludedCancelled,
+      contractFailures: r.contractFailures,
+      rateLabel: typeof r.rate === "number" ? r.rate.toFixed(3) : "—",
+      heightPct: max > 0 ? Math.round(r.total / max * 100) : 0
+    }));
+  }
+  function reportUiOf(data) {
+    if (!isRecord6(data)) return null;
+    const groups = Array.isArray(data.groups) ? data.groups : [];
+    const promote = isRecord6(data.promoteCriteria) ? data.promoteCriteria : null;
+    const side = isRecord6(data.sideColumns) ? data.sideColumns : {};
+    const health = isRecord6(data.healthPanel) ? data.healthPanel : {};
+    const labels = {
+      "promote-recommended": "建议晋级",
+      "insufficient-sample": "样本不足",
+      "below-threshold": "低于阈值",
+      "no-canary": "无灰度"
+    };
+    const status = promote !== null && typeof promote.status === "string" ? promote.status : "";
+    return {
+      agentId: typeof data.agentId === "string" ? data.agentId : "",
+      groupCount: groups.length,
+      promoteLabel: labels[status] ?? status,
+      approvalTimeoutCount: typeof side.approvalTimeoutCount === "number" ? side.approvalTimeoutCount : 0,
+      healthTriggered: health.triggered === true,
+      healthNote: typeof health.note === "string" ? health.note : ""
+    };
+  }
+
+  // src/portal/ui/agentsView.ts
+  function agentCatalogHtml(m) {
+    const header = pageHeaderHtml({ view: "agents", title: "Agent 目录" });
+    if (m.rows.length === 0) {
+      const body = cardHtml({
+        title: "Agent 目录（前端聚合，无 /api/agents 端点）",
+        body: emptyStateHtml({ title: "暂无 Agent 数据", hint: "近期有任务或有能力登记的 Agent 会出现在这里" })
+      });
+      return `${header}${body}`;
+    }
+    const rows = m.rows.map((r) => `<tr>
+    <td class="mono" title="${esc(r.agentId)}">${esc(r.agentId)}</td>
+    <td>待确认 ${r.candidate} / 已生效 ${r.active} / 已退场 ${r.retired}</td>
+    <td><a class="mono" href="#/agents/${encodeURIComponent(r.agentId)}">详情</a></td>
+  </tr>`).join("");
+    const table = tableHtml({
+      caption: "Agent 目录（tasks + capabilities 双源去重，前端聚合，无 /api/agents 端点）",
+      columns: ["Agent", "能力登记", "操作"],
+      rowsHtml: rows
+    });
+    return `${header}${table}`;
+  }
+  function zoneErrorHtml(zone, message) {
+    return `<div class="error-state" role="alert"><p class="error-state__message">${zone}加载失败：${esc(message)}</p><button type="button" class="btn btn--secondary error-state__retry" data-action="retry">重试</button></div>`;
+  }
+  function cardZoneHtml(m) {
+    if (m.card.error !== null) return cardHtml({ title: "能力卡（card）", body: zoneErrorHtml("能力卡", m.card.error) });
+    const c = m.card.data;
+    if (c === null) return cardHtml({ title: "能力卡（card）", body: '<div class="loading-state" role="status">加载中……</div>' });
+    const mission = c.mission.length > 0 ? `<ul>${c.mission.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>` : '<p class="hint">—</p>';
+    const nonGoals = c.nonGoals.length > 0 ? `<ul>${c.nonGoals.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>` : '<p class="hint">—</p>';
+    const tools = c.tools.length > 0 ? `<ul class="card-tools">${c.tools.map((t) => `<li><span class="mono">${esc(t.toolId)}</span>${riskBadgeHtml(t.riskLevel)}</li>`).join("")}</ul>` : '<p class="hint">—</p>';
+    return cardHtml({
+      title: `能力卡（card · ${esc(shortId(c.versionId))}）`,
+      body: `<dl class="kv-detail">
+      <dt>agentId</dt><dd class="mono">${esc(c.agentId)}</dd>
+      <dt>versionId</dt><dd class="mono" title="${esc(c.versionId)}">${esc(c.versionId)}</dd>
+      <dt>specVersion / contentHash</dt><dd><span class="mono">${esc(c.specVersion)}</span> / <span class="mono" title="${esc(c.contentHash)}">${esc(shortId(c.contentHash))}</span></dd>
+      <dt>mission</dt><dd>${mission}</dd>
+      <dt>nonGoals</dt><dd>${nonGoals}</dd>
+      <dt>tools</dt><dd>${tools}</dd>
+      <dt>inputContract</dt><dd><span class="mono" title="${esc(c.inputContract.digest)}">${esc(shortId(c.inputContract.digest))}</span>（${esc(c.inputContract.type)}）</dd>
+      <dt>outputContract</dt><dd><span class="mono" title="${esc(c.outputContract.digest)}">${esc(shortId(c.outputContract.digest))}</span>（${esc(c.outputContract.type)}）</dd>
+      <dt>budgets</dt><dd><pre class="code-block">${esc(c.budgetsJson)}</pre></dd>
+      <dt>approvalPolicy</dt><dd><pre class="code-block">${esc(c.approvalJson)}</pre></dd>
+      <dt>evolutionPolicy</dt><dd><pre class="code-block">${esc(c.evolutionJson)}</pre></dd>
+    </dl>`
+    });
+  }
+  function insightZoneHtml(m) {
+    if (m.insight.error !== null) return cardHtml({ title: "认知洞察（insight）", body: zoneErrorHtml("认知洞察", m.insight.error) });
+    const i = m.insight.data;
+    if (i === null) return cardHtml({ title: "认知洞察（insight）", body: '<div class="loading-state" role="status">加载中……</div>' });
+    const declaredTools = Array.isArray(i.declared.tools) ? i.declared.tools.filter((t) => typeof t === "object" && t !== null && typeof t.toolId === "string") : [];
+    const declared = `<div class="insight-zone">
+    <h4>声明面（Agent Card 冻结字段子集）</h4>
+    <dl class="kv-detail">
+      <dt>versionId</dt><dd class="mono">${esc(i.versionId)}</dd>
+      <dt>mission</dt><dd>${esc(prettyOf(i.declared.mission))}</dd>
+      <dt>nonGoals</dt><dd>${esc(prettyOf(i.declared.nonGoals))}</dd>
+      <dt>tools</dt><dd>${declaredTools.length > 0 ? declaredTools.map((t) => `<span class="mono">${esc(t.toolId)}</span>${riskBadgeHtml(t.riskLevel)}`).join(" ") : "—"}</dd>
+    </dl>
+  </div>`;
+    const entries = i.activeEntries.length > 0 ? `<ul class="assertion-list">${i.activeEntries.map((e) => `<li><span class="mono" title="${esc(e.capabilityId)}">${esc(shortId(e.capabilityId))}</span><span class="badge">${esc(CAPABILITY_KIND_LABELS[e.kind] ?? e.kind)}</span>${esc(e.statement)}<span class="hint">${esc(CAPABILITY_ORIGIN_LABELS[e.origin] ?? e.origin)} · 证据 ${e.evidenceCount}</span></li>`).join("")}</ul>` : "";
+    const emptyHint = i.emptyHint !== null ? `<p class="hint hint--static">${esc(i.emptyHint)}</p>` : "";
+    const assertions = `<div class="insight-zone">
+    <h4>断言面（Registry 活跃断言）</h4>
+    <p class="hint">活跃：capability ${i.activeCounts.capability} / limitation ${i.activeCounts.limitation}；待补证据候选 ${i.openCandidates.evidencePending}/${i.openCandidates.total}</p>
+    ${emptyHint}${entries}
+  </div>`;
+    const behaviorNote = i.behaviorInsufficientNote !== null ? `<p class="hint hint--static">${esc(i.behaviorInsufficientNote)}</p>` : "";
+    const behavior = `<div class="insight-zone">
+    <h4>行为面（近 30 天趋势窗）</h4>
+    <p class="hint">since ${esc(i.behaviorSince)} · status ${esc(i.behaviorStatus)}</p>
+    ${behaviorNote}
+  </div>`;
+    return cardHtml({
+      title: `认知洞察（insight · 生成于 ${esc(formatTimestamp(i.generatedAt))}）`,
+      body: `${declared}${assertions}${behavior}`
+    });
+  }
+  function prettyOf(v) {
+    return typeof v === "string" ? v : JSON.stringify(v) ?? "—";
+  }
+  function trendZoneHtml(m) {
+    const switcher = `<div class="filter-bar">
+    <button type="button" class="btn${m.bucket === "day" ? " btn--primary" : " btn--secondary"}" data-action="bucket-day"${m.bucket === "day" ? ' aria-pressed="true"' : ""}>日桶</button>
+    <button type="button" class="btn${m.bucket === "week" ? " btn--primary" : " btn--secondary"}" data-action="bucket-week"${m.bucket === "week" ? ' aria-pressed="true"' : ""}>周桶</button>
+  </div>`;
+    if (m.trend.error !== null) {
+      return cardHtml({ title: "能力趋势（trend）", body: `${switcher}${zoneErrorHtml("能力趋势", m.trend.error)}` });
+    }
+    const t = m.trend.data;
+    if (t === null) return cardHtml({ title: "能力趋势（trend）", body: `${switcher}<div class="loading-state" role="status">加载中……</div>` });
+    const summary = `<p class="hint">bucket ${esc(t.summary.bucket)} · 共 ${t.summary.bucketCount} 桶 · 最新桶 ${esc(t.summary.latestKey ?? "—")} 通过率 ${esc(t.summary.latestRateLabel)}</p>`;
+    const chart = t.summary.hasData ? `<div class="trend-bars">${t.bars.map((b) => `<div class="trend-bar-col"><div class="trend-bar" style="height:${Math.max(b.heightPct, 2)}%" title="${esc(b.key)}：total ${b.total} / succeeded ${b.succeeded} / excludedCancelled ${b.excludedCancelled} / contractFailures ${b.contractFailures} / 通过率 ${b.rateLabel}"></div><span class="trend-bar__key">${esc(b.key)}</span><span class="trend-bar__rate">${esc(b.rateLabel)}</span></div>`).join("")}</div>` : '<p class="hint hint--static">—（无分母不假装）</p>';
+    return cardHtml({
+      title: "能力趋势（trend · tasks 五键：total/succeeded/excludedCancelled/contractFailures/contractPassRate）",
+      body: `${switcher}${summary}${chart}<p class="hint">${esc(t.coverageNote)}</p>`
+    });
+  }
+  function reportZoneHtml(m) {
+    if (m.report.error !== null) return cardHtml({ title: "报告摘要（report）", body: zoneErrorHtml("报告摘要", m.report.error) });
+    const r = m.report.data;
+    if (r === null) return cardHtml({ title: "报告摘要（report）", body: '<div class="loading-state" role="status">加载中……</div>' });
+    const timeoutBadge = r.approvalTimeoutCount > 0 ? `<span class="badge badge--warn">审批超时 ${r.approvalTimeoutCount}</span>` : '<span class="badge">审批超时 0</span>';
+    const healthBar = r.healthTriggered ? `<div class="warning" role="alert">${esc(r.healthNote)}</div>` : "";
+    return cardHtml({
+      title: "报告摘要（reportSummary 五键）",
+      body: `<dl class="kv-detail">
+      <dt>agentId</dt><dd class="mono">${esc(r.agentId)}</dd>
+      <dt>分组数（groupCount）</dt><dd>${r.groupCount}</dd>
+      <dt>晋升建议（promoteLabel）</dt><dd>${esc(r.promoteLabel)}</dd>
+      <dt>审批超时（approvalTimeoutCount）</dt><dd>${timeoutBadge}</dd>
+      <dt>健康触发（healthTriggered）</dt><dd>${r.healthTriggered ? "是" : "否"}</dd>
+    </dl>${healthBar}${r.healthTriggered ? "" : `<p class="hint">${esc(r.healthNote)}</p>`}`
+    });
+  }
+  function agentDetailHtml(m) {
+    const header = pageHeaderHtml({ view: "agent-detail", title: `Agent 详情（${shortId(m.agentId)}）` });
+    const drillDown = cardHtml({
+      title: "能力下钻",
+      body: `<p><a class="btn btn--secondary" href="#/observe/capabilities?agent=${encodeURIComponent(m.agentId)}">查看该 Agent 的能力登记</a></p>`
+    });
+    return `${header}${cardZoneHtml(m)}${insightZoneHtml(m)}${trendZoneHtml(m)}${reportZoneHtml(m)}${drillDown}`;
+  }
+  function cardZone(data) {
+    const ui = cardUiOf(data);
+    return ui === null ? { data: null, error: "响应形状异常（Agent Card 键缺失）" } : { data: ui, error: null };
+  }
+  function insightZone(data) {
+    const ui = insightUiOf(data);
+    return ui === null ? { data: null, error: "响应形状异常（insight 三区键缺失）" } : { data: ui, error: null };
+  }
+  function reportZone(data) {
+    const ui = reportUiOf(data);
+    return ui === null ? { data: null, error: "响应形状异常（reportSummary 键缺失）" } : { data: ui, error: null };
+  }
+
+  // src/portal/ui/agentsPage.ts
+  var POLL_INTERVAL_MS7 = 1e4;
+  var STATS_LIMIT4 = 100;
+  var TASKS_PATH3 = `/api/tasks?limit=${STATS_LIMIT4}`;
+  var CAPABILITIES_BASE2 = "/api/capabilities";
+  function isRecord7(v) {
+    return typeof v === "object" && v !== null;
+  }
+  function isHttp401(r) {
+    return isRecord7(r) && r.ok === false && r.kind === "http" && r.status === 401;
+  }
+  function mountAgentsPage(ctx) {
+    let authFailed = false;
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    function render(rows) {
+      ctx.view.innerHTML = agentCatalogHtml({ rows, now: ctx.now() });
+    }
+    function renderAuthFailed() {
+      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    }
+    function renderError(message) {
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">目录加载失败：${message}</p><button type="button" class="btn btn--secondary error-state__retry" data-action="retry">重试</button></div>`;
+    }
+    async function refresh() {
+      if (authFailed) return;
+      const [tasksRes, capsRes] = await Promise.all([
+        apiGet(TASKS_PATH3, deps),
+        apiGet(CAPABILITIES_BASE2, deps)
+      ]);
+      if (isHttp401(tasksRes) || isHttp401(capsRes)) {
+        authFailed = true;
+        poller.stop();
+        renderAuthFailed();
+        return;
+      }
+      if (!tasksRes.ok && !capsRes.ok) {
+        renderError(explainFailure(tasksRes));
+        return;
+      }
+      const taskRows = (tasksRes.ok ? isRecord7(tasksRes.data) && Array.isArray(tasksRes.data.tasks) ? tasksRes.data.tasks : Array.isArray(tasksRes.data) ? tasksRes.data : [] : []).filter((r) => isRecord7(r) && typeof r.agentId === "string");
+      const capRows = (capsRes.ok && Array.isArray(capsRes.data) ? capsRes.data : []).filter((r) => isRecord7(r) && typeof r.agentId === "string" && typeof r.status === "string");
+      render(agentCatalogRows(taskRows, capRows));
+    }
+    const poller = createPoller({ intervalMs: POLL_INTERVAL_MS7, fn: refresh, timerHost: ctx.timerHost });
+    function onClick(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-action]");
+      if (!hit) return;
+      if (hit.dataset.action === "retry") void refresh();
+    }
+    function onVisibility(ev) {
+      const t = ev?.target;
+      const hidden = typeof t?.hidden === "boolean" ? t.hidden : ctx.doc.hidden;
+      poller.onVisibility(!hidden);
+    }
+    ctx.view.addEventListener("click", onClick);
+    ctx.doc.addEventListener("visibilitychange", onVisibility);
+    ctx.view.innerHTML = '<div class="loading-state" role="status">加载中……</div>';
+    void refresh();
+    poller.start();
+    return {
+      destroy() {
+        ctx.view.removeEventListener("click", onClick);
+        ctx.doc.removeEventListener("visibilitychange", onVisibility);
+        poller.stop();
+      }
+    };
+  }
+  function mountAgentDetailPage(ctx, agentId, query) {
+    const bucket = query.bucket === "week" ? "week" : "day";
+    let authFailed = false;
+    const deps = { fetchImpl: ctx.fetchImpl, token: loadToken };
+    const base = `/api/agents/${encodeURIComponent(agentId)}`;
+    const trendPath = bucket === "week" ? `${base}/trend?bucket=week` : `${base}/trend`;
+    const model = {
+      agentId,
+      card: { data: null, error: null },
+      insight: { data: null, error: null },
+      trend: { data: null, error: null },
+      report: { data: null, error: null },
+      bucket,
+      now: ctx.now()
+    };
+    function render() {
+      ctx.view.innerHTML = agentDetailHtml(model);
+    }
+    function renderAuthFailed() {
+      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    }
+    function failureText(r) {
+      return explainFailure(r);
+    }
+    async function refresh() {
+      if (authFailed) return;
+      const [cardRes, insightRes, trendRes, reportRes] = await Promise.all([
+        apiGet(`${base}/card`, deps),
+        apiGet(`${base}/insight`, deps),
+        apiGet(trendPath, deps),
+        apiGet(`${base}/report`, deps)
+      ]);
+      const results = [cardRes, insightRes, trendRes, reportRes];
+      if (results.some(isHttp401)) {
+        authFailed = true;
+        poller.stop();
+        renderAuthFailed();
+        return;
+      }
+      if (cardRes.ok) model.card = cardZone(cardRes.data);
+      else model.card = { data: null, error: failureText(cardRes) };
+      if (insightRes.ok) model.insight = insightZone(insightRes.data);
+      else model.insight = { data: null, error: failureText(insightRes) };
+      if (trendRes.ok && isRecord7(trendRes.data) && Array.isArray(trendRes.data.buckets)) {
+        const summary = trendSummaryOf({
+          agentId,
+          bucket: typeof trendRes.data.bucket === "string" ? trendRes.data.bucket : bucket,
+          buckets: trendRes.data.buckets
+        });
+        const trend = {
+          bars: trendBarsOf(trendRes.data.buckets),
+          coverageNote: isRecord7(trendRes.data.coverage) && typeof trendRes.data.coverage.note === "string" ? trendRes.data.coverage.note : "",
+          summary: {
+            bucket: summary.bucket,
+            bucketCount: summary.bucketCount,
+            hasData: summary.hasData,
+            latestKey: summary.latestKey,
+            latestRateLabel: summary.latestRateLabel
+          }
+        };
+        model.trend = { data: trend, error: null };
+      } else if (!trendRes.ok) {
+        model.trend = { data: null, error: failureText(trendRes) };
+      } else {
+        model.trend = { data: null, error: "响应形状异常（trend buckets 键缺失）" };
+      }
+      if (reportRes.ok) model.report = reportZone(reportRes.data);
+      else model.report = { data: null, error: failureText(reportRes) };
+      render();
+    }
+    const poller = createPoller({ intervalMs: POLL_INTERVAL_MS7, fn: refresh, timerHost: ctx.timerHost });
+    function onClick(ev) {
+      const target = ev.target;
+      const hit = target?.closest?.("[data-action]");
+      if (!hit) return;
+      const action = hit.dataset.action;
+      if (action === "retry") {
+        void refresh();
+      } else if (action === "bucket-day") {
+        location.hash = `#/agents/${encodeURIComponent(agentId)}`;
+      } else if (action === "bucket-week") {
+        location.hash = `#/agents/${encodeURIComponent(agentId)}?bucket=week`;
+      }
+    }
+    function onVisibility(ev) {
+      const t = ev?.target;
+      const hidden = typeof t?.hidden === "boolean" ? t.hidden : ctx.doc.hidden;
+      poller.onVisibility(!hidden);
+    }
+    ctx.view.addEventListener("click", onClick);
+    ctx.doc.addEventListener("visibilitychange", onVisibility);
+    render();
+    void refresh();
+    poller.start();
+    return {
+      destroy() {
+        ctx.view.removeEventListener("click", onClick);
+        ctx.doc.removeEventListener("visibilitychange", onVisibility);
+        poller.stop();
+      }
+    };
+  }
+
   // src/portal/ui/main.ts
   var APP_VERSION = true ? "0.1.0" : "";
   var DEFAULT_TIMER_HOST = {
@@ -2352,6 +2800,12 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
           break;
         case "observe-evidence":
           activePage = mountObserveEvidencePage(ctx, query);
+          break;
+        case "agents":
+          activePage = mountAgentsPage(ctx);
+          break;
+        case "agent-detail":
+          activePage = mountAgentDetailPage(ctx, route.id, query);
           break;
         default:
           activePage = null;
