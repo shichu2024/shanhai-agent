@@ -513,3 +513,25 @@ input.invalid { border-color: var(--color-danger); }
 .evidence-form { display: flex; gap: var(--sp-2); align-items: center; }
 .evidence-form .filter__search { flex: 1; }
 .input-error { color: var(--color-danger); font-size: var(--fs-xs); margin: var(--sp-1) 0 0; }
+
+/* Agent 目录与详情（§7.5，7-4） */
+.badge--warn { color: var(--color-warning); background: #FFEDD5; border: 1px solid #FB923C; font-weight: 700; }
+
+.kv-detail { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; }
+.kv-detail dt { color: var(--text-muted); font-size: var(--fs-sm); white-space: nowrap; }
+.kv-detail dd { margin: 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.kv-detail ul { margin: 0; padding-left: var(--sp-4); }
+
+.insight-zone { padding: var(--sp-2) 0; border-top: 1px dashed var(--border-primary); }
+.insight-zone:first-child { border-top: none; padding-top: 0; }
+.insight-zone h4 { margin: 0 0 var(--sp-1); font-size: var(--fs-sm); color: var(--text-secondary); }
+.assertion-list { list-style: none; margin: var(--sp-1) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+.assertion-list li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
+
+.trend-bars { display: flex; align-items: flex-end; gap: var(--sp-2); padding: var(--sp-3) 0 var(--sp-1); min-height: 140px; }
+.trend-bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: var(--sp-1); min-width: 48px; height: 100%; }
+.trend-bar { width: 100%; max-width: 48px; background: var(--st-running-bg, #DBEAFE); border: 1px solid #93C5FD; border-radius: var(--r-sm) var(--r-sm) 0 0; }
+.trend-bar__key { font-size: var(--fs-xs); color: var(--text-muted); }
+.trend-bar__rate { font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.card-tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+.card-tools li { display: flex; align-items: center; gap: var(--sp-2); }

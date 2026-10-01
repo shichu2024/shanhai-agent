@@ -26,10 +26,12 @@ describe('7-3 pages.renderContent（观测族占位 → 数据页加载壳）', 
     }
   });
 
-  it('agents 族（7-4 交付）仍为建设中占位', () => {
+  it('agents 族已由批次 7-4 交付：渲染加载态壳（随批契约迁移：本断言由占位断言收窄而来）', () => {
     for (const hash of ['#/agents', '#/agents/ag-1']) {
       const { route } = parseHash(hash);
-      expect(renderContent(route, {})).toContain('建设中');
+      const html = renderContent(route, {});
+      expect(html).toContain('加载中');
+      expect(html).not.toContain('建设中');
     }
   });
 });

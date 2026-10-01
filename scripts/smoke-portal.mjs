@@ -13,6 +13,11 @@
 //   → CLI evolution show 不存在候选（P3 收口：not_found + exit 1）
 //
 // 证据自证头部：形态标签 / 入口命令行 / node 版本 / repoRoot / dataDir / 各步时间戳与判据。
+//
+// 7-4（TASK-104）新增：
+//   - Agent 四读面断言（/api/agents/:id 的 card/insight/trend/report）+ 门户 UI 产物含 Agent 页接线；
+//   - P3-2 修复：tsx 形态下 npx→tsx→cli 为进程树，portal.kill() 只终止直接子进程会遗留孙进程——
+//     改为 Windows taskkill /T /F 整树终止 + POSIX SIGTERM，并以 exit 事件确认退出（check 留档）。
 
 import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
@@ -106,6 +111,27 @@ function api(method, apiPath, body) {
 
 function parseJsonSafe(text) {
   try { return JSON.parse(text); } catch { return null; }
+}
+
+// ---------- 进程回收（P3-2：tsx 形态 npx→tsx→cli 进程树整树终止，防遗留孙进程） ----------
+
+function killTree(child) {
+  if (!child || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32') {
+    // Windows：SIGTERM（node 默认 TerminateProcess）只杀直接子进程——taskkill /T 按进程树终止
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  } else {
+    try { child.kill('SIGTERM'); } catch { /* 已退出 */ }
+  }
+}
+
+/** 等待进程 exit 事件（超时 → false，check 留档不掩盖） */
+function waitForExit(child, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    if (!child || child.exitCode !== null || child.signalCode !== null) return resolve(true);
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => { clearTimeout(timer); resolve(true); });
+  });
 }
 
 async function waitFor(desc, fn, timeoutMs, intervalMs = 500) {
@@ -231,6 +257,32 @@ try {
     check('事件链含 approval_decided + task_resumed(manual-resume)',
       types.includes('approval_decided') && types.includes('task_resumed') && resumed?.resumedBy === 'manual-resume');
 
+    // ---------- 5.5 Agent 四读面 + 门户 UI 产物（7-4 新页数据面与接线） ----------
+
+    const agentCard = await api('GET', '/api/agents/smoke-a/card');
+    check('GET /api/agents/:id/card → 200（FR-AG-1 能力卡数据面）',
+      agentCard.status === 200 && parseJsonSafe(agentCard.body)?.agentId === 'smoke-a', `status=${agentCard.status}`);
+
+    const insightRes = await api('GET', '/api/agents/smoke-a/insight');
+    const insightBody = parseJsonSafe(insightRes.body);
+    check('GET /api/agents/:id/insight → 200 含三区键 declared/assertions/behavior（FR-AG-2）',
+      insightRes.status === 200 && !!insightBody?.declared && !!insightBody?.assertions && !!insightBody?.behavior, `status=${insightRes.status}`);
+
+    const trendDay = await api('GET', '/api/agents/smoke-a/trend?bucket=day');
+    const trendWeek = await api('GET', '/api/agents/smoke-a/trend?bucket=week');
+    check('GET /api/agents/:id/trend?bucket=day|week → 200 桶数组（FR-AG-3）',
+      trendDay.status === 200 && trendWeek.status === 200
+        && Array.isArray(parseJsonSafe(trendDay.body)?.buckets) && Array.isArray(parseJsonSafe(trendWeek.body)?.buckets));
+
+    const reportRes = await api('GET', '/api/agents/smoke-a/report');
+    const reportBody = parseJsonSafe(reportRes.body);
+    check('GET /api/agents/:id/report → 200 含 groups/promoteCriteria/healthPanel（FR-AG-4 reportSummary 源）',
+      reportRes.status === 200 && Array.isArray(reportBody?.groups) && !!reportBody?.promoteCriteria && !!reportBody?.healthPanel, `status=${reportRes.status}`);
+
+    const appJs = await api('GET', '/app.js');
+    check('门户 UI 产物含 Agent 目录/详情页接线（7-4：agent-detail 路由 + 报告摘要渲染）',
+      appJs.status === 200 && appJs.body.includes('agent-detail') && appJs.body.includes('报告摘要'), `bytes=${appJs.body.length}`);
+
     // ---------- 6. 任务 B：CLI approval approve 前台 spawn resume（P3-① execArgv 透传验证）----------
 
     const createB = runCli(['task', 'create', 'smoke-a', path.join(DATA_DIR, 'input.json'), '--by', 'smoke']);
@@ -255,9 +307,12 @@ try {
     check('CLI evolution show 不存在候选 → not_found + exit 1（批次 6-4 P3 收口）',
       evo.code === 1 && evo.err.includes('not_found') && evo.err.includes('演进候选不存在'), `exit=${evo.code}`);
   } finally {
-    portal.kill();
-    await new Promise((r) => setTimeout(r, 1500));
-    mock.kill();
+    // P3-2：整树终止 + exit 事件确认（tsx 形态 npx→tsx→cli 遗留孙进程修复；check 留档）
+    killTree(portal);
+    const portalExited = await waitForExit(portal);
+    check('portal 进程树退出无遗留（P3-2）', portalExited, `exitCode=${portal?.exitCode} signal=${portal?.signalCode}`);
+    killTree(mock);
+    await waitForExit(mock, 3000);
   }
 
   log('');
