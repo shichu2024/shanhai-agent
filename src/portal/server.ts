@@ -1,7 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import type { Runtime } from '../runtime.js';
+import { type Runtime, defaultDataDir } from '../runtime.js';
 import type { RecoveryReport } from '../modules/stateManager.js';
 import { ConfigError } from '../config.js';
 import { resolvePortalToken, bearerTokenOf, tokenMatches, hostAllowed } from './auth.js';
@@ -82,9 +82,17 @@ export function envPortalPort(env: NodeJS.ProcessEnv = process.env): number | un
   return n;
 }
 
-/** CLI 旗标解析：shanhai portal [--port N] [--host H] [--no-open]；非法值 fail-fast（TASK-96：--no-open=首启不拉浏览器） */
-export function parsePortalArgs(args: string[]): { port?: number; host?: string; open?: boolean } {
-  const out: { port?: number; host?: string; open?: boolean } = {};
+/** CLI 旗标解析：shanhai portal [--port N] [--host H] [--dataDir <dir>] [--no-open]；非法值 fail-fast
+ * （TASK-96：--no-open=首启不拉浏览器；TASK-109：--dataDir=数据目录旗标——修复此前被静默忽略） */
+export interface PortalArgs {
+  port?: number;
+  host?: string;
+  dataDir?: string;
+  open?: boolean;
+}
+
+export function parsePortalArgs(args: string[]): PortalArgs {
+  const out: PortalArgs = {};
   const portIdx = args.indexOf('--port');
   if (portIdx >= 0) {
     const raw = args[portIdx + 1];
@@ -98,8 +106,30 @@ export function parsePortalArgs(args: string[]): { port?: number; host?: string;
     if (!raw || raw.length === 0) throw new Error('--host 不能为空');
     out.host = raw;
   }
+  const dataDirIdx = args.indexOf('--dataDir');
+  if (dataDirIdx >= 0) {
+    const raw = args[dataDirIdx + 1];
+    if (!raw || raw.length === 0) throw new Error('--dataDir 不能为空');
+    out.dataDir = raw;
+  }
   if (args.includes('--no-open')) out.open = false;
   return out;
+}
+
+/**
+ * 门户数据目录解析（TASK-109）：--dataDir 旗标 > SHANHAI_DATA_DIR 环境变量 > 缺省 <repo>/data。
+ * 显式旗标优先于环境变量（用户当面输入压倒环境缺省，与 --port/--host 对 config/env 的优先序一致）；
+ * 旗标与 env 同时给出时不静默忽略任一方——旗标胜出（契约测试钉死，见 tests/wp109-1-dataDir.test.ts）。
+ */
+export function resolvePortalDataDir(
+  flagDataDir: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+  repoRoot: string,
+): string {
+  if (flagDataDir !== undefined && flagDataDir.length > 0) return flagDataDir;
+  const envDir = env.SHANHAI_DATA_DIR;
+  // 空串视为未设置（与 envPortalPort 对 SHANHAI_PORTAL_PORT 的口径一致）
+  return envDir !== undefined && envDir.length > 0 ? envDir : defaultDataDir(repoRoot);
 }
 
 const MIME_BY_EXT: Record<string, string> = {
