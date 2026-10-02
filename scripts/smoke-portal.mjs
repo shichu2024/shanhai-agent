@@ -215,9 +215,9 @@ try {
   const reqA = /requestId=([^；;\s]+)/.exec(runA.err)?.[1];
   check('task run → paused（exit 3）+ requestId', runA.code === 3 && runA.out.includes('"status": "paused"') && !!reqA, `exit=${runA.code}`);
 
-  // ---------- 4. 门户启动（真实 CLI 常驻进程）----------
+  // ---------- 4. 门户启动（真实 CLI 常驻进程；TASK-109：--dataDir 旗标形态实证——与 env 同值，旗标生效即正常起服）----------
 
-  portal = spawn(ENTRY.cmd, [...ENTRY.baseArgs, 'portal', '--port', String(PORT)], {
+  portal = spawn(ENTRY.cmd, [...ENTRY.baseArgs, 'portal', '--port', String(PORT), '--dataDir', DATA_DIR], {
     cwd: REPO_ROOT, env: ENV, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let portalReady = false;

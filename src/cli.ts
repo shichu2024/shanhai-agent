@@ -15,7 +15,7 @@ import { buildCapabilityTrend, TREND_BUCKET_UNITS, TrendError } from './modules/
 import { buildAgentInsight } from './modules/insight.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 import { loadRuntimeConfig } from './config.js';
-import { bootPortal, startPortalServer, parsePortalArgs } from './portal/server.js';
+import { bootPortal, startPortalServer, parsePortalArgs, resolvePortalDataDir } from './portal/server.js';
 import { buildResumeSpawnArgs } from './portal/resume.js';
 import { shouldAutoOpenBrowser, buildPortalUrl, openBrowser, markBrowserOpened } from './portal/browser.js';
 
@@ -74,20 +74,23 @@ function usage(): never {
   shanhai query t1 <taskId>
   shanhai query t2 <versionId>
   shanhai query t2p <versionId>                                    （T2′ 审批可举证）
-  shanhai portal [--port N] [--host H] [--no-open]                  （山海门户：常驻本机操作台；缺省 127.0.0.1:7780；首启自动拉浏览器携 Token，--no-open 关闭）
+  shanhai portal [--port N] [--host H] [--dataDir <dir>] [--no-open] （山海门户：常驻本机操作台；缺省 127.0.0.1:7780；首启自动拉浏览器携 Token，--no-open 关闭）
 
-环境：SHANHAI_DATA_DIR（数据目录，默认 <repo>/data）；SHANHAI_CONFIG / config_local.json + 密钥环境变量（T3）`);
+环境：SHANHAI_DATA_DIR（数据目录，默认 <repo>/data；门户可用 --dataDir 旗标覆盖，旗标优先于环境变量）；SHANHAI_CONFIG / config_local.json + 密钥环境变量（T3）`);
   process.exit(1);
 }
 
-/** 第六阶段批次一（§4.1 / §5.1 / D-42 / D-44）：shanhai portal——构造 Runtime + 条件化 startup + 常驻 server */
+/** 第六阶段批次一（§4.1 / §5.1 / D-42 / D-44）：shanhai portal——构造 Runtime + 条件化 startup + 常驻 server
+ * TASK-109：数据目录改为 resolvePortalDataDir（--dataDir 旗标 > SHANHAI_DATA_DIR > <repo>/data）——
+ * 修复旗标被静默忽略的走查备案缺陷（原实现仅认环境变量）。 */
 async function runPortal(rest: string[]): Promise<void> {
   const flags = parsePortalArgs(rest);
+  const portalDataDir = resolvePortalDataDir(flags.dataDir, process.env, repoRoot);
   const config = loadRuntimeConfig();
-  const rt = Runtime.fromConfig(dataDir, repoRoot);
+  const rt = Runtime.fromConfig(portalDataDir, repoRoot);
   const boot = bootPortal(rt); // D-42：Running>0 跳过 recover 并警示（bootPortal 内已打警示日志）
   const handle = await startPortalServer(rt, {
-    dataDir,
+    dataDir: portalDataDir,
     repoRoot,
     host: flags.host ?? config.portal?.host,
     port: flags.port ?? config.portal?.port,
@@ -101,10 +104,10 @@ async function runPortal(rest: string[]): Promise<void> {
   }
   // TASK-96：首启自动拉起默认浏览器（Token 经 URL fragment 带外注入，前端读后即抹除；
   // 重复启动不反复拉——marker 记录；显式 config/env Token 不拉（配置方自持口令，护测试/CI）；--no-open 逃生口）
-  if (flags.open !== false && shouldAutoOpenBrowser({ tokenGenerated: handle.tokenGenerated, tokenFile: handle.tokenFile, dataDir })) {
+  if (flags.open !== false && shouldAutoOpenBrowser({ tokenGenerated: handle.tokenGenerated, tokenFile: handle.tokenFile, dataDir: portalDataDir })) {
     const opened = openBrowser(buildPortalUrl(handle.host, handle.port, handle.token));
     if (opened) {
-      markBrowserOpened(dataDir);
+      markBrowserOpened(portalDataDir);
       console.log(`[portal] 已自动打开默认浏览器：http://${handle.host}:${handle.port}/ （Token 经 URL fragment 自动保存，无需手动复制粘贴）`);
     } else {
       console.warn('[portal] 自动拉起浏览器失败（无 GUI 环境可加 --no-open 跳过）——Token 见上方终端输出或 token 文件');
