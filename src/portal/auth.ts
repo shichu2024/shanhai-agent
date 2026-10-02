@@ -28,6 +28,29 @@ export function resolvePortalToken(dataDir: string, configToken?: string, envTok
   return { token, generated: true, tokenFile };
 }
 
+/** 只读 Token 解析结果（无 generated——绝不生成） */
+export interface ReadPortalToken {
+  token: string;
+  /** Token 来源文件路径（config/env 形态为 null） */
+  tokenFile: string | null;
+}
+
+/**
+ * 只读既有门户 Token（TASK-113，--print-url 用）：解析序 config > env > token 文件，均无返回 null。
+ * 与 resolvePortalToken 的关键差异：绝不生成、绝不落盘、绝不建目录——零副作用
+ * （打印路径不得在「从未首启」的数据目录里凭空造出 Token 文件）。
+ */
+export function readPortalToken(dataDir: string, configToken?: string, envToken?: string): ReadPortalToken | null {
+  if (configToken !== undefined && configToken.length > 0) return { token: configToken, tokenFile: null };
+  if (envToken !== undefined && envToken.length > 0) return { token: envToken, tokenFile: null };
+  const tokenFile = path.join(dataDir, 'portal', 'token');
+  if (existsSync(tokenFile)) {
+    const existing = readFileSync(tokenFile, 'utf8').trim();
+    if (existing.length > 0) return { token: existing, tokenFile };
+  }
+  return null;
+}
+
 /** 从 Authorization 头取 Bearer 凭据（非 Bearer 形态返回 null） */
 export function bearerTokenOf(req: http.IncomingMessage): string | null {
   const header = req.headers.authorization;

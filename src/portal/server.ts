@@ -4,7 +4,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { type Runtime, defaultDataDir } from '../runtime.js';
 import type { RecoveryReport } from '../modules/stateManager.js';
 import { ConfigError } from '../config.js';
-import { resolvePortalToken, bearerTokenOf, tokenMatches, hostAllowed } from './auth.js';
+import { resolvePortalToken, readPortalToken, bearerTokenOf, tokenMatches, hostAllowed } from './auth.js';
+import { buildPortalUrl } from './browser.js';
 import { handleApiGet, handleApiPost, sendJson, sendApiError, type ApiWriteContext } from './api.js';
 import { ResumeService } from './resume.js';
 
@@ -82,13 +83,16 @@ export function envPortalPort(env: NodeJS.ProcessEnv = process.env): number | un
   return n;
 }
 
-/** CLI 旗标解析：shanhai portal [--port N] [--host H] [--dataDir <dir>] [--no-open]；非法值 fail-fast
- * （TASK-96：--no-open=首启不拉浏览器；TASK-109：--dataDir=数据目录旗标——修复此前被静默忽略） */
+/** CLI 旗标解析：shanhai portal [--port N] [--host H] [--dataDir <dir>] [--no-open] [--print-url]；非法值 fail-fast
+ * （TASK-96：--no-open=首启不拉浏览器；TASK-109：--dataDir=数据目录旗标——修复此前被静默忽略；
+ * TASK-113：--print-url=按需打印带 Token 的访问 URL 后退出，布尔旗标） */
 export interface PortalArgs {
   port?: number;
   host?: string;
   dataDir?: string;
   open?: boolean;
+  /** TASK-113：--print-url=打印带 Token 的门户访问 URL 后直接退出（不启动服务/不写状态/不拉浏览器） */
+  printUrl?: boolean;
 }
 
 export function parsePortalArgs(args: string[]): PortalArgs {
@@ -109,7 +113,38 @@ export function parsePortalArgs(args: string[]): PortalArgs {
     out.dataDir = requireFlagValue(args, '--dataDir', dataDirIdx);
   }
   if (args.includes('--no-open')) out.open = false;
+  if (args.includes('--print-url')) out.printUrl = true;
   return out;
+}
+
+/**
+ * --print-url 构造项（TASK-113）：host/port/token 的配置面入参（cli.ts 从 config.portal 传入）。
+ * env 注入仅限端口与 Token（与 startPortalServer 实际消费的环境变量一致）。
+ */
+export interface PrintablePortalUrlOptions {
+  dataDir: string;
+  configHost?: string;
+  configPort?: number;
+  configToken?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * TASK-113（--print-url）：按需构造带 Token 的门户访问 URL——只读路径，打印后由 CLI 直接退出。
+ * host/port 口径与 startPortalServer 一致（旗标 > config > env 端口 SHANHAI_PORTAL_PORT > 缺省 127.0.0.1:7780）；
+ * Token 经 readPortalToken 只读解析（config > env > token 文件，绝不生成、零副作用）；
+ * 无 Token（从未首启）时抛错并指引先完成 `shanhai portal` 首启。URL 构造复用 buildPortalUrl（Token 置 fragment）。
+ */
+export function printablePortalUrl(flags: PortalArgs, opts: PrintablePortalUrlOptions): string {
+  const host = flags.host ?? opts.configHost ?? '127.0.0.1';
+  const port = flags.port ?? opts.configPort ?? envPortalPort(opts.env) ?? 7780;
+  const resolved = readPortalToken(opts.dataDir, opts.configToken, opts.env?.SHANHAI_PORTAL_TOKEN);
+  if (resolved === null) {
+    throw new Error(
+      '[portal] --print-url 未找到门户 Token（只读取既有 Token，不生成新 Token）——请先运行 `shanhai portal` 完成首次启动',
+    );
+  }
+  return buildPortalUrl(host, port, resolved.token);
 }
 
 /**
