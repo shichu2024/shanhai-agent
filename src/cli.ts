@@ -15,7 +15,7 @@ import { buildCapabilityTrend, TREND_BUCKET_UNITS, TrendError } from './modules/
 import { buildAgentInsight } from './modules/insight.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 import { loadRuntimeConfig } from './config.js';
-import { bootPortal, startPortalServer, parsePortalArgs, resolvePortalDataDir } from './portal/server.js';
+import { bootPortal, startPortalServer, parsePortalArgs, resolvePortalDataDir, printablePortalUrl } from './portal/server.js';
 import { buildResumeSpawnArgs } from './portal/resume.js';
 import { shouldAutoOpenBrowser, buildPortalUrl, openBrowser, markBrowserOpened } from './portal/browser.js';
 
@@ -74,7 +74,7 @@ function usage(): never {
   shanhai query t1 <taskId>
   shanhai query t2 <versionId>
   shanhai query t2p <versionId>                                    （T2′ 审批可举证）
-  shanhai portal [--port N] [--host H] [--dataDir <dir>] [--no-open] （山海门户：常驻本机操作台；缺省 127.0.0.1:7780；首启自动拉浏览器携 Token，--no-open 关闭）
+  shanhai portal [--port N] [--host H] [--dataDir <dir>] [--no-open] [--print-url] （山海门户：常驻本机操作台；缺省 127.0.0.1:7780；首启自动拉浏览器携 Token，--no-open 关闭；--print-url=打印带 Token 的访问 URL 后退出——浏览器新会话 Token 再取通道）
 
 环境：SHANHAI_DATA_DIR（数据目录，默认 <repo>/data；门户可用 --dataDir 旗标覆盖，旗标优先于环境变量）；SHANHAI_CONFIG / config_local.json + 密钥环境变量（T3）`);
   process.exit(1);
@@ -87,6 +87,19 @@ async function runPortal(rest: string[]): Promise<void> {
   const flags = parsePortalArgs(rest);
   const portalDataDir = resolvePortalDataDir(flags.dataDir, process.env, repoRoot);
   const config = loadRuntimeConfig();
+  // TASK-113：--print-url=按需输出带 Token 的访问 URL 后直接退出——不启动服务、不写任何状态、
+  // 不拉浏览器、不生成 Token（readPortalToken 只读）。缺省路径（不带旗标）绝不打印带 Token 的 URL。
+  if (flags.printUrl) {
+    console.log(`[portal] 门户访问 URL：${printablePortalUrl(flags, {
+      dataDir: portalDataDir,
+      configHost: config.portal?.host,
+      configPort: config.portal?.port,
+      configToken: config.portal?.token,
+      env: process.env,
+    })}`);
+    console.log('[portal] Token 在 URL fragment 中：粘贴到浏览器打开即自动保存并从地址栏抹除；仅本地终端输出，请勿外传');
+    return;
+  }
   const rt = Runtime.fromConfig(portalDataDir, repoRoot);
   const boot = bootPortal(rt); // D-42：Running>0 跳过 recover 并警示（bootPortal 内已打警示日志）
   const handle = await startPortalServer(rt, {
