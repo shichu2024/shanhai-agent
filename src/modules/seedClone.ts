@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { uuid } from '../hash.js';
@@ -71,26 +71,33 @@ export function cloneTaskForSeed(deps: { db: Database.Database; tracesDir: strin
     return { ...ev, eventId, taskId: newTaskId, traceId: newTaskId };
   });
 
-  // D-6 同序：先 JSONL 落盘成功，后库行（task_record + trace_index + failure_record 同事务）
+  // D-6 同序：先 JSONL 落盘成功，后库行（task_record + trace_index + failure_record 同事务）。
+  // TASK-110（P3-2 收口）：事务失败时回删已落盘 JSONL——不留无 task_record 的孤儿 trace 行
+  // （新 eventId 唯一不至于拒启，但 boot 对账会产生无主 JSONL；fail 后目录与库面恢复原状）。
   writeFileSync(newTraceFile, newEvents.map((e) => JSON.stringify(e) + '\n').join(''), 'utf8');
 
   const failures = db.prepare('SELECT * FROM failure_record WHERE taskId = ?').all(sourceTaskId) as Record<string, unknown>[];
-  db.transaction(() => {
-    insertRowClone(db, 'task_record', src, { taskId: newTaskId, traceFile: newTraceFile });
-    const insTrace = db.prepare('INSERT INTO trace_index (eventId, taskId, agentVersionId, eventType, timestamp) VALUES (?,?,?,?,?)');
-    for (const ev of newEvents) {
-      insTrace.run(ev.eventId, newTaskId, ev.agentVersionId, ev.eventType, ev.timestamp);
-    }
-    for (const f of failures) {
-      const traceRef = typeof f.traceRef === 'string' ? f.traceRef : null;
-      insertRowClone(db, 'failure_record', f, {
-        recordId: uuid(),
-        taskId: newTaskId,
-        // traceRef 重指克隆事件；映射外引用（理论不可达）保留原值——原事件仍存在，证据链不断
-        traceRef: traceRef !== null ? (idMap.get(traceRef) ?? traceRef) : null,
-      });
-    }
-  })();
+  try {
+    db.transaction(() => {
+      insertRowClone(db, 'task_record', src, { taskId: newTaskId, traceFile: newTraceFile });
+      const insTrace = db.prepare('INSERT INTO trace_index (eventId, taskId, agentVersionId, eventType, timestamp) VALUES (?,?,?,?,?)');
+      for (const ev of newEvents) {
+        insTrace.run(ev.eventId, newTaskId, ev.agentVersionId, ev.eventType, ev.timestamp);
+      }
+      for (const f of failures) {
+        const traceRef = typeof f.traceRef === 'string' ? f.traceRef : null;
+        insertRowClone(db, 'failure_record', f, {
+          recordId: uuid(),
+          taskId: newTaskId,
+          // traceRef 重指克隆事件；映射外引用（理论不可达）保留原值——原事件仍存在，证据链不断
+          traceRef: traceRef !== null ? (idMap.get(traceRef) ?? traceRef) : null,
+        });
+      }
+    })();
+  } catch (err) {
+    rmSync(newTraceFile, { force: true });
+    throw err;
+  }
 
   return { taskId: newTaskId, eventCount: newEvents.length, failureCount: failures.length };
 }

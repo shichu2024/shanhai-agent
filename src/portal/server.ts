@@ -95,25 +95,32 @@ export function parsePortalArgs(args: string[]): PortalArgs {
   const out: PortalArgs = {};
   const portIdx = args.indexOf('--port');
   if (portIdx >= 0) {
-    const raw = args[portIdx + 1];
+    const raw = requireFlagValue(args, '--port', portIdx);
     const n = Number(raw);
-    if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error(`--port 必须为 1-65535 的整数（收到：${raw ?? '(缺失)'}）`);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error(`--port 必须为 1-65535 的整数（收到：${raw}）`);
     out.port = n;
   }
   const hostIdx = args.indexOf('--host');
   if (hostIdx >= 0) {
-    const raw = args[hostIdx + 1];
-    if (!raw || raw.length === 0) throw new Error('--host 不能为空');
-    out.host = raw;
+    out.host = requireFlagValue(args, '--host', hostIdx);
   }
   const dataDirIdx = args.indexOf('--dataDir');
   if (dataDirIdx >= 0) {
-    const raw = args[dataDirIdx + 1];
-    if (!raw || raw.length === 0) throw new Error('--dataDir 不能为空');
-    out.dataDir = raw;
+    out.dataDir = requireFlagValue(args, '--dataDir', dataDirIdx);
   }
   if (args.includes('--no-open')) out.open = false;
   return out;
+}
+
+/**
+ * 值旗标取值守卫（TASK-110，P3-1）：缺值/空串沿用「不能为空」fail-fast；
+ * 取值以 `--` 开头（下一旗标被吞形态，如 `--dataDir --no-open`）显式拒绝——不静默吞旗标为值。
+ */
+function requireFlagValue(args: string[], flag: string, idx: number): string {
+  const raw = args[idx + 1];
+  if (raw === undefined || raw.length === 0) throw new Error(`${flag} 不能为空`);
+  if (raw.startsWith('--')) throw new Error(`${flag} 取值不能以 -- 开头（收到：${raw}；若为旗标误连请补上取值）`);
+  return raw;
 }
 
 /**
