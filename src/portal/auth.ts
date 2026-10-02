@@ -47,10 +47,47 @@ export function tokenMatches(expected: string, actual: string | null): boolean {
 /**
  * Host 头校验（防 DNS rebinding，D-44-4）：主机部分必须为回环形态或配置绑定地址（[:port] 任意端口均放行——
  * 端口由本服务自己监听，不构成 rebinding 面）。Host 缺失（HTTP/1.0 形态）一律拒绝。
+ *
+ * TASK-110（P3-③ 收口）：bindHost 为通配（0.0.0.0 / ::）时原白名单仅 [bindHost]——经 LAN IP 访问
+ * 一律 403，fail-closed UX 缺陷使通配绑定实际不可用。现放行 Host 主机部分为回环形态
+ * （127.0.0.1 / localhost / [::1]）或私网/链路本地字面 IP（决策官预裁定集合）；
+ * 公网域名与公网字面 IP 仍拒绝——rebinding 场景 Host 是公网域名，防护不弱化。
+ * 回环绑定（127.0.0.1/localhost）与具体地址绑定分支行为不变。
  */
 export function hostAllowed(hostHeader: string | undefined, bindHost: string): boolean {
   if (!hostHeader) return false;
   const hostPart = hostHeader.replace(/:\d+$/, '');
-  const allowed = bindHost === '127.0.0.1' || bindHost === 'localhost' ? ['127.0.0.1', 'localhost'] : [bindHost];
-  return allowed.includes(hostPart);
+  if (bindHost === '127.0.0.1' || bindHost === 'localhost') {
+    return hostPart === '127.0.0.1' || hostPart === 'localhost';
+  }
+  if (bindHost === '0.0.0.0' || bindHost === '::') {
+    return hostPart === '127.0.0.1' || hostPart === 'localhost' || hostPart === '[::1]'
+      || isPrivateOrLinkLocalIpv4(hostPart)
+      || isPrivateOrLinkLocalIpv6(hostPart);
+  }
+  return hostPart === bindHost;
+}
+
+/** IPv4 私网/链路本地字面 IP：10/8、172.16/12、192.168/16、169.254/16（点分十进制逐段校验，非 IP 形态 false） */
+function isPrivateOrLinkLocalIpv4(hostPart: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostPart);
+  if (!m) return false;
+  const octets = m.slice(1).map(Number);
+  if (octets.some((n) => n > 255)) return false;
+  const [a, b] = octets;
+  if (a === 10) return true; // 10/8
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+  if (a === 192 && b === 168) return true; // 192.168/16
+  return a === 169 && b === 254; // 169.254/16
+}
+
+/** IPv6 ULA/链路本地字面 IP：fc00::/7（含 fd 前缀）、fe80::/10——Host 头 IPv6 形态为 [addr]，按首 hextet 判段 */
+function isPrivateOrLinkLocalIpv6(hostPart: string): boolean {
+  if (!hostPart.startsWith('[') || !hostPart.endsWith(']')) return false;
+  const inner = hostPart.slice(1, -1);
+  if (!inner.includes(':')) return false;
+  const firstHextet = Number.parseInt(inner.split(':')[0] || '0', 16);
+  if (Number.isNaN(firstHextet)) return false;
+  if (firstHextet >= 0xfc00 && firstHextet <= 0xfdff) return true; // fc00::/7
+  return firstHextet >= 0xfe80 && firstHextet <= 0xfebf; // fe80::/10
 }
