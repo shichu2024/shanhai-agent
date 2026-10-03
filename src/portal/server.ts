@@ -95,7 +95,39 @@ export interface PortalArgs {
   printUrl?: boolean;
 }
 
+/** TASK-116：portal 支持的旗标全集（未知旗标 fail-fast 错误清单用） */
+const PORTAL_VALUE_FLAGS = ['--port', '--host', '--dataDir'] as const;
+const PORTAL_BOOL_FLAGS = ['--no-open', '--print-url'] as const;
+
+/**
+ * 未知旗标 / 多余位置参数守卫（TASK-116，合并 TASK-110 P3-1 / TASK-113 P3-1）：
+ * 备案缺陷——原实现仅识别五个已知旗标、其余 token 静默忽略，`shanhai portal --print-ur`（手误）
+ * 会真启动常驻服务挂住终端。契约：以 `--` 开头且不属于已知集合 → fail-fast（含旗标名+支持清单）；
+ * 非旗标 token（值旗标的取值除外）= 多余位置参数 → fail-fast（portal 无位置参数面）。
+ * 值旗标取值仍由既有 requireFlagValue 守卫拦截（缺值/空串/吞旗标形态），本守卫不重复其职责——
+ * 值位置上的 token（即使以 -- 开头，如 `--port --bogus`）留给取值守卫按「取值不能以 -- 开头」报错。
+ */
+function assertNoUnknownPortalTokens(args: string[]): void {
+  const supported = [...PORTAL_VALUE_FLAGS, ...PORTAL_BOOL_FLAGS].join(' ');
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+    if (token.startsWith('--')) {
+      const known =
+        (PORTAL_VALUE_FLAGS as readonly string[]).includes(token) ||
+        (PORTAL_BOOL_FLAGS as readonly string[]).includes(token);
+      if (!known) {
+        throw new Error(`未知旗标：${token}（shanhai portal 支持的旗标：${supported}）`);
+      }
+      // 值旗标：下一 token 是取值（缺值/吞旗标形态由 requireFlagValue 拦截），跳过
+      if ((PORTAL_VALUE_FLAGS as readonly string[]).includes(token)) i++;
+    } else {
+      throw new Error(`多余的位置参数：${token}（shanhai portal 不接受位置参数；支持的旗标：${supported}）`);
+    }
+  }
+}
+
 export function parsePortalArgs(args: string[]): PortalArgs {
+  assertNoUnknownPortalTokens(args);
   const out: PortalArgs = {};
   const portIdx = args.indexOf('--port');
   if (portIdx >= 0) {
