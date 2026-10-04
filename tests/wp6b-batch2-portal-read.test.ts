@@ -26,6 +26,9 @@ import { evolutionSummary } from '../src/portal/view/evolution.js';
 //           TrendError → 400 族结构化错误；空 Registry 非错误口径与 CLI 一致；
 //           门户层零写入零审计（dbDump 快照断言，derived/聚合惰性写 settle 后验证）；
 //           P3-② SHANHAI_PORTAL_PORT 非数字 fail-fast（对齐 D-49 严格口径）。
+// 稳定性注（TASK-119）：本文件真实 server 往返用例统一显式 timeout=20s——历史上三次
+//           （TASK-96/110/116 验收期）trend 族用例在高负载下以 5000ms 出头（如 5147ms）
+//           触发 vitest 缺省 5s 超时红，属余量不足非代码缺陷；此处收口余量，断言与被测面不变。
 
 const validJson = JSON.stringify(validOutput());
 const failing = JSON.stringify({ broken: true });
@@ -91,7 +94,7 @@ function policiesOf(rt: Runtime, agentId: string) {
 // ---------- A-37：events 时间线 ----------
 
 describe('WP6B2-1 GET /api/tasks/:id/events（A-37：与 trace.readEvents 深度相等）', () => {
-  it('事件原样返回（信封 + 载荷逐字段相等）；未知任务 → 404', async () => {
+  it('事件原样返回（信封 + 载荷逐字段相等）；未知任务 → 404', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'rd-a' }));
     const t = h.rt.tasks.createTask('rd-a', validInput, 't');
@@ -114,7 +117,7 @@ describe('WP6B2-1 GET /api/tasks/:id/events（A-37：与 trace.readEvents 深度
 // ---------- A-37：evidence 两端点 ----------
 
 describe('WP6B2-2 evidence 端点（A-37：与 EvidenceStore 深度相等；payload 字节原样）', () => {
-  it('GET /api/tasks/:id/evidence 与 taskEvidence 深度相等；未知任务 → 404 not_found', async () => {
+  it('GET /api/tasks/:id/evidence 与 taskEvidence 深度相等；未知任务 → 404 not_found', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'rd-ev' }));
     const t = h.rt.tasks.createTask('rd-ev', validInput, 't');
@@ -133,7 +136,7 @@ describe('WP6B2-2 evidence 端点（A-37：与 EvidenceStore 深度相等；payl
     expect(JSON.parse(missing.body).code).toBe('not_found');
   });
 
-  it('GET /api/evidence/:ref 各 kind 与 show 深度相等；eval → 501；未知 → 404；非法 ref → 400', async () => {
+  it('GET /api/evidence/:ref 各 kind 与 show 深度相等；eval → 501；未知 → 404；非法 ref → 400', { timeout: 20_000 }, async () => {
     const h = makeHarness([]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'rd-ref' }));
     const ok = h.rt.tasks.createTask('rd-ref', validInput, 't');
@@ -170,7 +173,7 @@ describe('WP6B2-2 evidence 端点（A-37：与 EvidenceStore 深度相等；payl
 // ---------- A-37：capability 列表（CLI 投影形状）+ 零写入 ----------
 
 describe('WP6B2-3 GET /api/capabilities（A-37：CLI capability list 投影深度相等）', () => {
-  it('投影形状与 CLI 相同（12 键冻结集）；过滤参数透传；非法 kind/status → 400', async () => {
+  it('投影形状与 CLI 相同（12 键冻结集）；过滤参数透传；非法 kind/status → 400', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'cap-a' }));
     const t = h.rt.tasks.createTask('cap-a', validInput, 't');
@@ -213,7 +216,7 @@ describe('WP6B2-3 GET /api/capabilities（A-37：CLI capability list 投影深�
     expect(badStatus.status).toBe(400);
   });
 
-  it('空 Registry → 200 空清单非错误（口径与 CLI 一致）', async () => {
+  it('空 Registry → 200 空清单非错误（口径与 CLI 一致）', { timeout: 20_000 }, async () => {
     const h = makeHarness([]);
     const handle = await startTestServer(h.rt);
     const res = await httpRequest(handle.port, 'GET', '/api/capabilities', TOKEN);
@@ -225,7 +228,7 @@ describe('WP6B2-3 GET /api/capabilities（A-37：CLI capability list 投影深�
 // ---------- A-37：趋势 + TrendError → 400 族 ----------
 
 describe('WP6B2-4 GET /api/agents/:id/trend（A-37 + TrendError 结构化 400）', () => {
-  it('显式 since/until → 与 buildCapabilityTrend 深度相等；参数透传（bucket=week）', async () => {
+  it('显式 since/until → 与 buildCapabilityTrend 深度相等；参数透传（bucket=week）', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'tr-a' }));
     const t = h.rt.tasks.createTask('tr-a', validInput, 't');
@@ -248,7 +251,7 @@ describe('WP6B2-4 GET /api/agents/:id/trend（A-37 + TrendError 结构化 400）
     }
   });
 
-  it('缺省 until（时点漂移字段按类型归一，批次一先例）；无数据 agent → 200 空桶（空 Registry 非错误）', async () => {
+  it('缺省 until（时点漂移字段按类型归一，批次一先例）；无数据 agent → 200 空桶（空 Registry 非错误）', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'tr-b' }));
     registerAndRelease(h.rt, sampleSpec({ agentId: 'tr-empty' }));
@@ -268,7 +271,7 @@ describe('WP6B2-4 GET /api/agents/:id/trend（A-37 + TrendError 结构化 400）
     expect((JSON.parse(empty.body) as { buckets: unknown[] }).buckets).toEqual([]);
   });
 
-  it('TrendError → 400 族结构化错误（不裸抛 500）：非法 since / 非法 bucket', async () => {
+  it('TrendError → 400 族结构化错误（不裸抛 500）：非法 since / 非法 bucket', { timeout: 20_000 }, async () => {
     const h = makeHarness([]);
     const handle = await startTestServer(h.rt);
 
@@ -285,7 +288,7 @@ describe('WP6B2-4 GET /api/agents/:id/trend（A-37 + TrendError 结构化 400）
 // ---------- A-37：insight / card / report ----------
 
 describe('WP6B2-5 GET /api/agents/:id/insight（A-37 + 空 Registry 非错误）', () => {
-  it('与 buildAgentInsight 深度相等（generatedAt 按类型归一）；versionId/since 透传', async () => {
+  it('与 buildAgentInsight 深度相等（generatedAt 按类型归一）；versionId/since 透传', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'ins-a' }));
     const t = h.rt.tasks.createTask('ins-a', validInput, 't');
@@ -305,7 +308,7 @@ describe('WP6B2-5 GET /api/agents/:id/insight（A-37 + 空 Registry 非错误）
     expect(answer.behavior.status).toBe('ok'); // 窗口内有任务数据
   });
 
-  it('未知 agent → 404（RegistrationError → not_found）', async () => {
+  it('未知 agent → 404（RegistrationError → not_found）', { timeout: 20_000 }, async () => {
     const h = makeHarness([]);
     const handle = await startTestServer(h.rt);
     const res = await httpRequest(handle.port, 'GET', '/api/agents/ghost/insight', TOKEN);
@@ -315,7 +318,7 @@ describe('WP6B2-5 GET /api/agents/:id/insight（A-37 + 空 Registry 非错误）
 });
 
 describe('WP6B2-6 GET /api/agents/:id/card（A-37）', () => {
-  it('与 registry.agentCard 深度相等（缺省指针 / 显式 versionId）；未知 agent / 版本 → 404', async () => {
+  it('与 registry.agentCard 深度相等（缺省指针 / 显式 versionId）；未知 agent / 版本 → 404', { timeout: 20_000 }, async () => {
     const h = makeHarness([]);
     const spec = sampleSpec({ agentId: 'card-a' });
     const v1 = h.rt.registry.registerSpec(spec, 't', validationDepsOf(h.rt));
@@ -340,7 +343,7 @@ describe('WP6B2-6 GET /api/agents/:id/card（A-37）', () => {
 });
 
 describe('WP6B2-7 GET /api/agents/:id/report（A-37：与 buildAgentReport + queryT1 注入同构）', () => {
-  it('深度相等（t1QueryP95Ms 时点漂移按类型归一）；since 透传', async () => {
+  it('深度相等（t1QueryP95Ms 时点漂移按类型归一）；since 透传', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'rep-a' }));
     const t = h.rt.tasks.createTask('rep-a', validInput, 't');
@@ -364,7 +367,7 @@ describe('WP6B2-7 GET /api/agents/:id/report（A-37：与 buildAgentReport + que
 // ---------- A-37：evolution（门户不执行惰性聚合——D-48 零写入） ----------
 
 describe('WP6B2-8 evolution 端点（A-37 + 零写入：门户不聚合）', () => {
-  it('未聚合库：GET /api/evolution 不触发惰性聚合（dbDump 不变，返回空清单）；settle 后与 list() 深度相等', async () => {
+  it('未聚合库：GET /api/evolution 不触发惰性聚合（dbDump 不变，返回空清单）；settle 后与 list() 深度相等', { timeout: 20_000 }, async () => {
     const h = makeHarness([]);
     const spec = sampleSpec({
       agentId: 'evo-a',
@@ -404,7 +407,7 @@ describe('WP6B2-8 evolution 端点（A-37 + 零写入：门户不聚合）', () 
 // ---------- 读面全景零写入 sweep（D-48 纪律，dbDump 快照断言范式沿用） ----------
 
 describe('WP6B2-9 读面全景零写入 sweep（settle 后全端点 GET → dbDump 不变）', () => {
-  it('events/evidence/capabilities/card/trend/insight/report/evolution 全景读零写入零审计', async () => {
+  it('events/evidence/capabilities/card/trend/insight/report/evolution 全景读零写入零审计', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'sweep-a' }));
     const t = h.rt.tasks.createTask('sweep-a', validInput, 't');
@@ -448,7 +451,7 @@ describe('WP6B2-10 envPortalPort（P3-②：非数字/非整数/越界 ConfigErr
       expect(() => envPortalPort({ SHANHAI_PORTAL_PORT: raw })).toThrow(ConfigError);
     }
   });
-  it('startPortalServer 消费 env 端口：非法值拒启动；合法值生效', async () => {
+  it('startPortalServer 消费 env 端口：非法值拒启动；合法值生效', { timeout: 20_000 }, async () => {
     const h = makeHarness([]);
     const prev = process.env.SHANHAI_PORTAL_PORT;
     try {
