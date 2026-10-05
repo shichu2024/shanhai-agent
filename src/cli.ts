@@ -16,6 +16,7 @@ import { buildAgentInsight } from './modules/insight.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 import { loadRuntimeConfig } from './config.js';
 import { bootPortal, startPortalServer, parsePortalArgs, resolvePortalDataDir, printablePortalUrl } from './portal/server.js';
+import { assertNoUnknownCommandFlags } from './cliFlags.js';
 import { buildResumeSpawnArgs } from './portal/resume.js';
 import { shouldAutoOpenBrowser, buildPortalUrl, openBrowser, markBrowserOpened } from './portal/browser.js';
 
@@ -145,6 +146,9 @@ async function main(): Promise<void> {
   const [cmd, sub, ...rest] = process.argv.slice(2);
   if (!cmd) usage();
   if (cmd === 'portal') return runPortal(process.argv.slice(3)); // sub 变体会吞掉首个旗标，这里取完整参数段
+  // TASK-127：顶层命令族未知旗标 fail-fast（先于 Runtime 构造——不建库不写状态，零副作用）；
+  // portal 子路径已由 parsePortalArgs 内建守卫覆盖（TASK-116），此处不重复。
+  assertNoUnknownCommandFlags(cmd, sub, rest);
   const rt = Runtime.fromConfig(dataDir, repoRoot);
   rt.startup('cli');
   const by = flagValue(rest, '--by') ?? 'cli';
