@@ -5,7 +5,7 @@
 // approve/deny 点击即提交（FR-WR-1④，无确认弹窗）；超时倒计时按 request.timeoutAt 本地计算（FR-AD-6）。
 
 import { apiGet, apiPost } from './client.js';
-import { explainFailure } from './errors.js';
+import { AUTH_EXPIRED_TEXT, explainFailure } from './errors.js';
 import type { PageCtx, PageHandle } from './pageCtx.js';
 import { approvalDetailHtml, type ApprovalDetail } from './approvalsView.js';
 import type { PageFeedback } from './tasksView.js';
@@ -33,7 +33,7 @@ export function mountApprovalDetailPage(ctx: PageCtx, requestId: string): PageHa
     const res = await apiGet(`/api/approvals/${encodeURIComponent(requestId)}`, deps);
     if (!res.ok && res.kind === 'http' && res.status === 401) {
       authFailed = true;
-      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
       return;
     }
     if (!res.ok && res.kind === 'http' && res.status === 404) {

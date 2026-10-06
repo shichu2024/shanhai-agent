@@ -5,6 +5,7 @@
 // 只读无写操作；读面 401 → 认证失效提示并停轮询（§11-2）。
 
 import { apiGet } from './client.js';
+import { AUTH_EXPIRED_TEXT } from './errors.js';
 import { collectAgentIds } from './observeData.js';
 import { observeCapabilitiesHtml, type CapabilityFilters, type CapabilityRowUi } from './observeCapabilitiesView.js';
 import type { PageCtx, PageHandle } from './pageCtx.js';
@@ -67,7 +68,7 @@ export function mountObserveCapabilitiesPage(ctx: PageCtx, query: Record<string,
   }
 
   function renderAuthFailed(): void {
-    ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
   }
 
   async function refresh(): Promise<void> {

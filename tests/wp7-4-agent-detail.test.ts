@@ -307,10 +307,11 @@ describe('7-4 mountAgentDetailPage（FR-AG-1..5 四读面）', () => {
     handle.destroy();
   });
 
-  it('401 → 认证失效提示并停轮询；destroy 停轮询移除监听', async () => {
+  it('401 → 登录状态失效提示（去技术化，TASK-128）并停轮询；destroy 停轮询移除监听', async () => {
     const { ctx, view, timers } = makeCtx(async () => jsonResponse({ ok: false, code: 'unauthorized', message: 'Token 无效' }, 401));
     const handle = mountAgentDetailPage(ctx, 'ag-1', {});
-    await vi.waitFor(() => expect(view.innerHTML).toContain('认证失效'));
+    await vi.waitFor(() => expect(view.innerHTML).toContain('登录状态已失效'));
+    expect(view.innerHTML).not.toContain('Token'); // 401 态不向用户暴露口令概念（含服务端 message 直显面）
     handle.destroy();
     expect(timers.length).toBe(0);
     expect(view.listeners.get('click')?.length ?? 0).toBe(0);

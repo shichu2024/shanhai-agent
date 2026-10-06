@@ -149,7 +149,9 @@ describe('7-2 错误码面（FR-WR-5 逐码一致）', () => {
     expect(UI_ERROR_TEXT.task_not_paused).toBe('任务当前状态不可续跑（已续跑或已终局）');
     expect(UI_ERROR_TEXT.version_mismatch).toBe('审批绑定版本与任务当前版本不一致，刷新核对');
     expect(UI_ERROR_TEXT.timeout_applied).toBe('请求已被惰性超时终局（denied + 任务终局），刷新查看');
-    expect(UI_ERROR_TEXT.unauthorized).toContain('Token');
+    // TASK-128：401 文案去技术化——不出现 Token/Bearer/Authorization，指引自动送达恢复路径
+    expect(UI_ERROR_TEXT.unauthorized).toContain('登录状态已失效');
+    expect(UI_ERROR_TEXT.unauthorized).not.toMatch(/Token|Bearer|Authorization/);
     expect(UI_ERROR_TEXT.host_forbidden).toBe('仅供本机访问');
     expect(UI_ERROR_TEXT.bad_request).toBe('请求参数无效');
     expect(UI_ERROR_TEXT.cross_process_graceful_unsupported).toContain('强制中止');

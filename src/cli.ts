@@ -18,7 +18,7 @@ import { loadRuntimeConfig } from './config.js';
 import { bootPortal, startPortalServer, parsePortalArgs, resolvePortalDataDir, printablePortalUrl } from './portal/server.js';
 import { assertNoUnknownCommandFlags } from './cliFlags.js';
 import { buildResumeSpawnArgs } from './portal/resume.js';
-import { shouldAutoOpenBrowser, buildPortalUrl, openBrowser, markBrowserOpened } from './portal/browser.js';
+import { shouldAutoOpenBrowser, buildPortalUrl, openBrowser } from './portal/browser.js';
 
 // A5 §2 CLI 命令表（v1 + v1.1 增补命令族：review / approval / --resume / --force / --no-pointer）
 
@@ -116,15 +116,15 @@ async function runPortal(rest: string[]): Promise<void> {
     console.log(`[portal] 首次启动已自动生成门户 Token：${handle.token}`);
     console.log(`[portal] Token 已落 ${handle.tokenFile}（权限 0600；非 POSIX 平台权限位不适用）——API 请求需携带 Authorization: Bearer <token>`);
   }
-  // TASK-96：首启自动拉起默认浏览器（Token 经 URL fragment 带外注入，前端读后即抹除；
-  // 重复启动不反复拉——marker 记录；显式 config/env Token 不拉（配置方自持口令，护测试/CI）；--no-open 逃生口）
-  if (flags.open !== false && shouldAutoOpenBrowser({ tokenGenerated: handle.tokenGenerated, tokenFile: handle.tokenFile, dataDir: portalDataDir })) {
+  // TASK-96→TASK-128：每次启动自动拉起默认浏览器（Token 经 URL fragment 带外注入，前端读后即抹除）。
+  // 文件托管形态恒拉起——会话随每次启动自动送达，用户无需理解或手动操作任何 Token；
+  // 显式 config/env Token 不拉（配置方自持口令，护测试/CI）；--no-open 逃生口。
+  if (flags.open !== false && shouldAutoOpenBrowser({ tokenGenerated: handle.tokenGenerated, tokenFile: handle.tokenFile })) {
     const opened = openBrowser(buildPortalUrl(handle.host, handle.port, handle.token));
     if (opened) {
-      markBrowserOpened(portalDataDir);
-      console.log(`[portal] 已自动打开默认浏览器：http://${handle.host}:${handle.port}/ （Token 经 URL fragment 自动保存，无需手动复制粘贴）`);
+      console.log(`[portal] 已自动打开默认浏览器：http://${handle.host}:${handle.port}/ （登录凭证自动送达，无需手动操作）`);
     } else {
-      console.warn('[portal] 自动拉起浏览器失败（无 GUI 环境可加 --no-open 跳过）——Token 见上方终端输出或 token 文件');
+      console.warn('[portal] 自动拉起浏览器失败（无 GUI 环境可加 --no-open 跳过）——可运行 shanhai portal --print-url 获取访问 URL');
     }
   }
   const shutdown = (): void => {

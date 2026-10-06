@@ -17,9 +17,10 @@
       <a href="#/observe" data-nav="observe" class="nav-link">观测</a>
     </nav>
     <div class="header-side">
+      <!-- TASK-128：口令区为兜底入口（显式 config/env Token 场景）；常规使用经每次启动自动登录，无需理解任何凭证概念。 -->
       <form id="token-form" class="token-form">
-        <label class="visually-hidden" for="token-input" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">门户 Token</label>
-        <input id="token-input" type="password" placeholder="门户 Token（会话级存储）" autocomplete="off" />
+        <label class="visually-hidden" for="token-input" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">访问口令</label>
+        <input id="token-input" type="password" placeholder="访问口令（一般无需填写，启动时自动登录）" autocomplete="off" />
         <button type="submit" class="btn btn--secondary btn--sm">保存</button>
         <span id="token-state" class="token-state"></span>
       </form>

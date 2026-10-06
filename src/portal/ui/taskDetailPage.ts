@@ -3,7 +3,7 @@
 // （无子任务端点，如实口径）；轮询 3s 仅非终态（终态即停）；操作区接 §8 写流。
 
 import { apiGet, apiPost } from './client.js';
-import { explainFailure } from './errors.js';
+import { AUTH_EXPIRED_TEXT, explainFailure } from './errors.js';
 import type { PageCtx, PageHandle } from './pageCtx.js';
 import { ds } from './pageCtx.js';
 import { createPoller } from './poll.js';
@@ -54,7 +54,7 @@ export function mountTaskDetailPage(ctx: PageCtx, taskId: string): PageHandle {
     if (!taskRes.ok && taskRes.kind === 'http' && taskRes.status === 401) {
       authFailed = true;
       poller.stop();
-      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
       return;
     }
     if (!taskRes.ok && taskRes.kind === 'http' && taskRes.status === 404) {

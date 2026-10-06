@@ -460,14 +460,15 @@ describe('7-2 mountTasksPage（FR-T-5 轮询 / URL 同步 / §8 写操作）', (
     handle.destroy();
   });
 
-  it('读面 401：内容区显示认证失效并停止轮询（§11-2）', async () => {
+  it('读面 401：内容区显示登录状态失效（去技术化，TASK-128）并停止轮询（§11-2）', async () => {
     let reads = 0;
     const { ctx, view, timers } = makeCtx(async (path, init) => {
       if (init?.method !== 'POST') { reads++; return jsonResponse({ ok: false, code: 'unauthorized', message: 'm' }, 401); }
       return jsonResponse({});
     });
     const handle = mountTasksPage(ctx, {});
-    await vi.waitFor(() => expect(view.innerHTML).toContain('认证失效'));
+    await vi.waitFor(() => expect(view.innerHTML).toContain('登录状态已失效'));
+    expect(view.innerHTML).not.toContain('Token'); // 401 态不向用户暴露口令概念
     expect(reads).toBe(2); // 两个读面各失败一次后不再拉取
     expect(timers).toHaveLength(0);
     handle.destroy();

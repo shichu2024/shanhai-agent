@@ -318,9 +318,11 @@ async function handleRequest(
   }
 
   if (pathname === '/api' || pathname.startsWith('/api/')) {
-    // ② 认证：所有 /api/* 要求 Bearer Token（静态资产豁免——不含数据面，D-44-2）
+    // ② 认证：所有 /api/* 要求 Bearer Token（静态资产豁免——不含数据面，D-44-2）。
+    // TASK-128：message 面向最终用户（前端未知码兜底会直显），不得出现 Bearer/Authorization 等
+    // 技术概念——机器语义由 code 承载（unauthorized），协议细节留在注释与文档。
     if (!tokenMatches(token, bearerTokenOf(req))) {
-      sendJson(res, 401, { ok: false, code: 'unauthorized', message: '缺少或错误的 Bearer Token（Authorization: Bearer <token>）' });
+      sendJson(res, 401, { ok: false, code: 'unauthorized', message: '访问凭证缺失或已失效' });
       return;
     }
     // ③ POST 强制 application/json（跨站简单请求协议层拒绝，P1-2-②）——先于路由；写面路由（批次 6-3）

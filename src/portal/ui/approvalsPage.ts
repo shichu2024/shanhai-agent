@@ -4,6 +4,7 @@
 // 前端分页 20/页；轮询 5s（timeoutRemainingMs 随轮询刷新）。
 
 import { apiGet } from './client.js';
+import { AUTH_EXPIRED_TEXT } from './errors.js';
 import type { PageCtx, PageHandle } from './pageCtx.js';
 import { createPoller } from './poll.js';
 import {
@@ -62,7 +63,7 @@ export function mountApprovalsPage(ctx: PageCtx, _query: Record<string, string>)
     if (!res.ok && res.kind === 'http' && res.status === 401) {
       authFailed = true;
       poller.stop();
-      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
       return;
     }
     if (res.ok) {
