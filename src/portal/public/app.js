@@ -374,9 +374,10 @@
   }
 
   // src/portal/ui/errors.ts
+  var AUTH_EXPIRED_TEXT = "登录状态已失效——请从启动门户的终端重新打开（启动时会自动完成登录，无需手动操作）";
   var UI_ERROR_TEXT = {
     // server.ts 错误面
-    unauthorized: "Token 无效或已过期，请更新门户 Token 后重试",
+    unauthorized: AUTH_EXPIRED_TEXT,
     host_forbidden: "仅供本机访问",
     unsupported_media_type: "不应出现的 415（unsupported_media_type）——前端只用 GET/POST + JSON，出现即前端缺陷，已如实展示",
     method_not_allowed: "不应出现的 405（method_not_allowed）——前端只用 GET/POST，出现即前端缺陷，已如实展示",
@@ -710,7 +711,7 @@
     }
     function renderAuthFailed() {
       ctx.view.innerHTML = `<header class="page-header"><div class="beast-row"><span class="beast-row__icon" aria-hidden="true">应</span><span class="beast-row__name">应龙·任务工作台</span><span class="beast-row__tagline">任务执行域：调度、运行与状态机</span></div><h2 class="page-header__title">任务列表</h2></header>
-      <div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>`;
+      <div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
     }
     async function refresh() {
       if (authFailed) return;
@@ -1020,7 +1021,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       if (!taskRes.ok && taskRes.kind === "http" && taskRes.status === 401) {
         authFailed = true;
         poller.stop();
-        ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+        ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
         return;
       }
       if (!taskRes.ok && taskRes.kind === "http" && taskRes.status === 404) {
@@ -1293,7 +1294,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       if (!res.ok && res.kind === "http" && res.status === 401) {
         authFailed = true;
         poller.stop();
-        ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+        ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
         return;
       }
       if (res.ok) {
@@ -1372,7 +1373,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       const res = await apiGet(`/api/approvals/${encodeURIComponent(requestId)}`, deps);
       if (!res.ok && res.kind === "http" && res.status === 401) {
         authFailed = true;
-        ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+        ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
         return;
       }
       if (!res.ok && res.kind === "http" && res.status === 404) {
@@ -1693,7 +1694,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       });
     }
     function renderAuthFailed() {
-      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
     }
     async function refresh() {
       if (authFailed) return;
@@ -1842,7 +1843,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       ctx.view.innerHTML = observeCapabilitiesHtml({ agents, filters, rows, now: ctx.now() });
     }
     function renderAuthFailed() {
-      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
     }
     async function refresh() {
       if (authFailed) return;
@@ -2005,7 +2006,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       ctx.view.innerHTML = observeEvolutionHtml(rows);
     }
     function renderAuthFailed() {
-      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
     }
     async function refresh() {
       if (authFailed) return;
@@ -2555,7 +2556,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       ctx.view.innerHTML = agentCatalogHtml({ rows, now: ctx.now() });
     }
     function renderAuthFailed() {
-      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
     }
     function renderError(message) {
       ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">目录加载失败：${message}</p><button type="button" class="btn btn--secondary error-state__retry" data-action="retry">重试</button></div>`;
@@ -2624,7 +2625,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       ctx.view.innerHTML = agentDetailHtml(model);
     }
     function renderAuthFailed() {
-      ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+      ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
     }
     function failureText(r) {
       return explainFailure(r);
@@ -2748,7 +2749,7 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
       if (!token) {
         if (connEl) {
           connEl.className = "conn conn--unknown";
-          connEl.textContent = "未认证（请设置 Token）";
+          connEl.textContent = "未登录（从启动门户的终端打开即可自动登录）";
         }
         return;
       }

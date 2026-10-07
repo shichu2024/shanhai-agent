@@ -112,11 +112,12 @@ describe('7-4 mountAgentsPage（Agent 目录，§7.5）', () => {
     handle.destroy();
   });
 
-  it('401 → 认证失效提示并停轮询（§11-2）', async () => {
+  it('401 → 登录状态失效提示（去技术化，TASK-128）并停轮询（§11-2）', async () => {
     const { ctx, view, timers } = makeCtx(async () => jsonResponse({ ok: false, code: 'unauthorized', message: 'Token 无效' }, 401));
     const handle = mountAgentsPage(ctx);
-    await vi.waitFor(() => expect(view.innerHTML).toContain('认证失效'));
-    expect(view.innerHTML).toContain('请更新 Token');
+    await vi.waitFor(() => expect(view.innerHTML).toContain('登录状态已失效'));
+    expect(view.innerHTML).toContain('自动完成登录'); // 恢复路径指向自动送达，非要求用户操作口令
+    expect(view.innerHTML).not.toContain('Token'); // 401 态不向用户暴露口令概念
     expect(timers.length).toBe(0); // 轮询已停（authFailed 短路，无后续请求）
     handle.destroy();
   });

@@ -286,11 +286,11 @@ describe('7-3 mountObserveOverviewPage（FR-O-1）', () => {
     handle.destroy();
   });
 
-  it('读面 401：认证失效提示并停轮询（§11-2）', async () => {
+  it('读面 401：登录状态失效提示（去技术化，TASK-128）并停轮询（§11-2）', async () => {
     const clock = { now: NOW };
     const { ctx, view, timers } = makeCtx(async () => jsonResponse({ ok: false, code: 'unauthorized', message: 'm' }, 401));
     const handle = mountObserveOverviewPage(ctx, { cache: cacheWithClock(clock) });
-    await vi.waitFor(() => expect(view.innerHTML).toContain('认证失效'));
+    await vi.waitFor(() => expect(view.innerHTML).toContain('登录状态已失效'));
     expect(timers).toHaveLength(0);
     handle.destroy();
   });

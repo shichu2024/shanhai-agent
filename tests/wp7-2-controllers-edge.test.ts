@@ -198,11 +198,11 @@ describe('7-2 taskDetailPage 边路分支', () => {
     handle.destroy();
   });
 
-  it('读面 401：认证失效提示并停轮询', async () => {
+  it('读面 401：登录状态失效提示（去技术化，TASK-128）并停轮询', async () => {
     const fetchImpl = async (): Promise<Response> => jsonResponse({ ok: false, code: 'unauthorized', message: 'm' }, 401);
     const { ctx, view, timers } = detailCtx(fetchImpl);
     const handle = mountTaskDetailPage(ctx, 'task-aaaabbbbccccdddd');
-    await vi.waitFor(() => expect(view.innerHTML).toContain('认证失效'));
+    await vi.waitFor(() => expect(view.innerHTML).toContain('登录状态已失效'));
     expect(timers).toHaveLength(0);
     handle.destroy();
   });
@@ -246,7 +246,7 @@ describe('7-2 approvalsPage 边路分支', () => {
 
     const { ctx: c2, view: v2, timers: t2 } = makePage(async () => jsonResponse({ ok: false, code: 'unauthorized', message: 'm' }, 401));
     const h2 = mountApprovalsPage(c2, {});
-    await vi.waitFor(() => expect(v2.innerHTML).toContain('认证失效'));
+    await vi.waitFor(() => expect(v2.innerHTML).toContain('登录状态已失效'));
     expect(t2).toHaveLength(0);
     h2.destroy();
   });
@@ -268,10 +268,10 @@ describe('7-2 approvalDetailPage 边路分支', () => {
     handle.destroy();
   });
 
-  it('读面 401：认证失效提示', async () => {
+  it('读面 401：登录状态失效提示（去技术化，TASK-128）', async () => {
     const { ctx, view } = makePage(async () => jsonResponse({ ok: false, code: 'unauthorized', message: 'm' }, 401));
     const handle = mountApprovalDetailPage(ctx, 'req-1');
-    await vi.waitFor(() => expect(view.innerHTML).toContain('认证失效'));
+    await vi.waitFor(() => expect(view.innerHTML).toContain('登录状态已失效'));
     handle.destroy();
   });
 

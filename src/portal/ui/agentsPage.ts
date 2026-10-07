@@ -6,7 +6,7 @@
 // 「触发反思」写操作零出现（对应端点不存在，本期写面 5 POST 不含它）。
 
 import { apiGet } from './client.js';
-import { explainFailure, type ApiFailure } from './errors.js';
+import { AUTH_EXPIRED_TEXT, explainFailure, type ApiFailure } from './errors.js';
 
 import { agentCatalogRows } from './agentsData.js';
 import {
@@ -46,7 +46,7 @@ export function mountAgentsPage(ctx: PageCtx): PageHandle {
   }
 
   function renderAuthFailed(): void {
-    ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
   }
 
   function renderError(message: string): void {
@@ -135,7 +135,7 @@ export function mountAgentDetailPage(ctx: PageCtx, agentId: string, query: Recor
   }
 
   function renderAuthFailed(): void {
-    ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
   }
 
   function failureText(r: unknown): string {

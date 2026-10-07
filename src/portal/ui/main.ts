@@ -92,13 +92,14 @@ export function boot(opts: BootOptions = {}): void {
     connEl.textContent = CONNECTION_LABELS[conn.phase];
   }
 
-  /** 连接探针：带 Token 时 GET /api/tasks?limit=1（既有端点只读探测；401/403 不计入断连） */
+  /** 连接探针：带 Token 时 GET /api/tasks?limit=1（既有端点只读探测；401/403 不计入断连）。
+   *  TASK-128：无凭证指示去技术化——不要求用户理解/设置 Token，指引走自动送达路径。 */
   async function probe(): Promise<void> {
     const token = loadToken();
     if (!token) {
       if (connEl) {
         connEl.className = 'conn conn--unknown';
-        connEl.textContent = '未认证（请设置 Token）';
+        connEl.textContent = '未登录（从启动门户的终端打开即可自动登录）';
       }
       return;
     }

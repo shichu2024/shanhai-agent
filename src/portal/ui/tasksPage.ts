@@ -5,7 +5,7 @@
 // 读面 401 → 认证失效提示并停轮询（§11-2）。
 
 import { apiGet, apiPost } from './client.js';
-import { explainFailure } from './errors.js';
+import { AUTH_EXPIRED_TEXT, explainFailure } from './errors.js';
 import type { PageCtx, PageHandle } from './pageCtx.js';
 import { ds } from './pageCtx.js';
 import { createPoller } from './poll.js';
@@ -84,7 +84,7 @@ export function mountTasksPage(ctx: PageCtx, query: Record<string, string>): Pag
 
   function renderAuthFailed(): void {
     ctx.view.innerHTML = `<header class="page-header"><div class="beast-row"><span class="beast-row__icon" aria-hidden="true">应</span><span class="beast-row__name">应龙·任务工作台</span><span class="beast-row__tagline">任务执行域：调度、运行与状态机</span></div><h2 class="page-header__title">任务列表</h2></header>
-      <div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>`;
+      <div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
   }
 
   async function refresh(): Promise<void> {

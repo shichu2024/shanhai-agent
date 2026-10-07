@@ -4,6 +4,7 @@
 // 读面 401 → 认证失效提示并停轮询（§11-2）。
 
 import { apiGet } from './client.js';
+import { AUTH_EXPIRED_TEXT } from './errors.js';
 import { observeEvolutionHtml, type EvolutionRowUi } from './observeEvolutionView.js';
 import type { PageCtx, PageHandle } from './pageCtx.js';
 import { createPoller } from './poll.js';
@@ -30,7 +31,7 @@ export function mountObserveEvolutionPage(ctx: PageCtx): PageHandle {
   }
 
   function renderAuthFailed(): void {
-    ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
   }
 
   async function refresh(): Promise<void> {

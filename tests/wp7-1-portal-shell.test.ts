@@ -204,7 +204,7 @@ describe('7-1 shell boot（FR-G 全局框架接线）', () => {
     expect(conn.textContent).toContain('重连中');
   });
 
-  it('无 Token 时探针不发请求，指示为未认证提示', async () => {
+  it('无 Token 时探针不发请求，指示为未登录提示（去技术化，TASK-128）', async () => {
     stubGlobals('#/nope'); // not-found 无数据控制器（随批迁移：#/agents 已由 7-4 挂目录控制器）
     const shell = stubDocument();
     shell.reg('view');
@@ -216,7 +216,8 @@ describe('7-1 shell boot（FR-G 全局框架接线）', () => {
     await Promise.resolve();
     const probeCalls = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((c) => String(c[0]).includes('limit=1'));
     expect(probeCalls).toHaveLength(0);
-    expect(conn.textContent).toContain('Token');
+    expect(conn.textContent).toContain('未登录');
+    expect(conn.textContent).not.toContain('Token'); // 指示不向用户暴露口令概念
   });
 
   it('realDeps：从全局环境装配（浏览器实跑路径）', () => {

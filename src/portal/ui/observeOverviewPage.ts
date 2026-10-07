@@ -5,6 +5,7 @@
 // 读面 401 → 认证失效提示并停轮询（§11-2）。
 
 import { apiGet, type ApiResult } from './client.js';
+import { AUTH_EXPIRED_TEXT } from './errors.js';
 import type { PortalCache } from './cache.js';
 import { sharedObserveCache } from './observeCache.js';
 import {
@@ -92,7 +93,7 @@ export function mountObserveOverviewPage(ctx: PageCtx, opts: OverviewMountOption
   }
 
   function renderAuthFailed(): void {
-    ctx.view.innerHTML = '<div class="error-state" role="alert"><p class="error-state__message">认证失效，请更新 Token 后重试</p></div>';
+    ctx.view.innerHTML = `<div class="error-state" role="alert"><p class="error-state__message">${AUTH_EXPIRED_TEXT}</p></div>`;
   }
 
   async function refresh(): Promise<void> {

@@ -2,10 +2,15 @@
 // 码面 = errormap.ts:4-20 全部结构化码 + server.ts 401/403/415/405 + api.ts 400 bad_request
 // 与 cancel 前置 409 cross_process_graceful_unsupported；逐码一致、零遗漏、零虚构
 // （tests/wp7-2-write-errors.test.ts 测试侧硬编码基线锁定）。
+// TASK-128：401 文案去技术化——最终用户不应需要理解 Token/Bearer/Authorization；
+// 恢复路径指向自动送达（每次启动自动拉起浏览器），而非要求用户操作口令。
+
+/** 读面 401 专属提示（各页面 content 区整屏态；与 UI_ERROR_TEXT.unauthorized 同口径） */
+export const AUTH_EXPIRED_TEXT = '登录状态已失效——请从启动门户的终端重新打开（启动时会自动完成登录，无需手动操作）';
 
 export const UI_ERROR_TEXT: Record<string, string> = {
   // server.ts 错误面
-  unauthorized: 'Token 无效或已过期，请更新门户 Token 后重试',
+  unauthorized: AUTH_EXPIRED_TEXT,
   host_forbidden: '仅供本机访问',
   unsupported_media_type: '不应出现的 415（unsupported_media_type）——前端只用 GET/POST + JSON，出现即前端缺陷，已如实展示',
   method_not_allowed: '不应出现的 405（method_not_allowed）——前端只用 GET/POST，出现即前端缺陷，已如实展示',

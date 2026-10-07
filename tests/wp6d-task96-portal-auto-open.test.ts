@@ -1,21 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  browserMarkerFile,
   buildPortalUrl,
   tokenFromFragment,
   shouldAutoOpenBrowser,
-  markBrowserOpened,
   openBrowser,
 } from '../src/portal/browser.js';
 import { parsePortalArgs } from '../src/portal/server.js';
 
-// TASK-96：门户首启自动拉起默认浏览器并携带 Token URL（免手动粘贴）。
-// 契约钉死（对齐批次四 walkthrough 口径）：
+// TASK-96：门户自动拉起默认浏览器并携带 Token URL（免手动粘贴）。
+// TASK-128 修订：拉起条件改为「文件托管形态每次启动恒拉起」——旧 marker 单次拉起使后续启动
+// 不再送达会话凭证，用户手动打开页面即见技术性 401 报错（用户不应需要理解 Token）。
+// 契约钉死：
 //   ① Token 只经 URL fragment 带外注入（D-44 边界不变——不发往服务端、不进日志）；
-//   ② 拉起条件 = 新生成 Token 恒拉，或 Token 文件在且 marker 缺失才拉（重复启动不反复拉）；
+//   ② 拉起条件 = Token 为文件托管形态（tokenFile ≠ null，含新生成）每次启动恒拉；
 //   ③ 显式 config/env Token（tokenFile=null）不拉——配置方自持口令，护测试/冒烟/CI 形态；
 //   ④ --no-open 逃生口；前端 consumeTokenFragment 与 tokenFromFragment 同源镜像。
 
@@ -62,30 +62,24 @@ describe('TASK-96 tokenFromFragment（与 app.js consumeTokenFragment 同源镜�
   });
 });
 
-describe('TASK-96 shouldAutoOpenBrowser（拉起决策 + marker 幂等）', () => {
-  it('新生成 Token 恒拉起（即使 marker 已在——新口令需送达）', () => {
+describe('TASK-128 shouldAutoOpenBrowser（每次启动恒拉起，TASK-96 marker 语义废止）', () => {
+  it('新生成 Token（tokenFile 在）恒拉起', () => {
     const dataDir = tempDataDir();
-    mkdirSync(path.join(dataDir, 'portal'), { recursive: true });
-    markBrowserOpened(dataDir);
-    expect(shouldAutoOpenBrowser({ tokenGenerated: true, tokenFile: path.join(dataDir, 'portal', 'token'), dataDir })).toBe(true);
+    expect(shouldAutoOpenBrowser({ tokenGenerated: true, tokenFile: path.join(dataDir, 'portal', 'token') })).toBe(true);
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it('Token 文件在 + marker 缺失 → 拉；markBrowserOpened 后 → 不再拉（重复启动不反复拉）', () => {
+  it('既有 Token 文件（非新生成）每次启动仍拉起——会话凭证随每次启动送达（用户无需理解 Token）', () => {
     const dataDir = tempDataDir();
     const tokenFile = path.join(dataDir, 'portal', 'token');
-    expect(shouldAutoOpenBrowser({ tokenGenerated: false, tokenFile, dataDir })).toBe(true);
-    const marker = markBrowserOpened(dataDir);
-    expect(marker).toBe(browserMarkerFile(dataDir));
-    expect(readFileSync(marker, 'utf8')).not.toContain('token'); // marker 内容不含 Token（时间戳）
-    expect(shouldAutoOpenBrowser({ tokenGenerated: false, tokenFile, dataDir })).toBe(false);
+    expect(shouldAutoOpenBrowser({ tokenGenerated: false, tokenFile })).toBe(true);
+    // 不存在「已拉起过即不再拉」形态：旧 browser-opened marker 机制随 TASK-128 移除
+    expect(shouldAutoOpenBrowser({ tokenGenerated: false, tokenFile })).toBe(true);
     rmSync(dataDir, { recursive: true, force: true });
   });
 
   it('显式 config/env Token（tokenFile=null）不拉——护测试/冒烟/CI 形态', () => {
-    const dataDir = tempDataDir();
-    expect(shouldAutoOpenBrowser({ tokenGenerated: false, tokenFile: null, dataDir })).toBe(false);
-    rmSync(dataDir, { recursive: true, force: true });
+    expect(shouldAutoOpenBrowser({ tokenGenerated: false, tokenFile: null })).toBe(false);
   });
 });
 
