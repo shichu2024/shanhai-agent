@@ -18,6 +18,9 @@ import { approvalSummary, formatDuration } from '../src/portal/view/approvals.js
 // WP-6B 批次一（6-1/4）：门户骨架 + 核心读面。
 // DoD 断言：A-32（纯增量）/ A-35（boot 安全）/ A-37 部分（tasks/approvals 读端点深度相等）/
 //           A-38（401/415/403/路径穿越）/ A-39（配置兼容）/ A-40（工程门另跑）。
+// 稳定性注（TASK-136，对齐 TASK-119 第五批口径）：本文件真实 server 往返用例（WP6B-4/5，
+//           经 startPortalServer + httpRequest）统一显式 timeout=20s——防高负载下 vitest 缺省
+//           5s 超时红（trend 族同机理余量不足）；纯函数/无 server 往返用例不加。
 
 const validJson = JSON.stringify(validOutput());
 
@@ -205,7 +208,7 @@ describe('WP6B-3 bootPortal 条件化 startup（D-42，A-35 boot 安全）', () 
 // ---------- D-44 / A-38：认证与边界 + 核心读面端点（A-37 部分） ----------
 
 describe('WP6B-4 门户 server：认证边界（A-38：401/415/403/穿越）', () => {
-  it('无 Authorization / 错误 Token 访问 /api/* → 401；正确 Bearer → 200', async () => {
+  it('无 Authorization / 错误 Token 访问 /api/* → 401；正确 Bearer → 200', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const dir = mkdtempSync(path.join(tmpdir(), 'shanhai-srv-'));
     const handle = await startTestServer(h.rt, dir, process.cwd());
@@ -221,7 +224,7 @@ describe('WP6B-4 门户 server：认证边界（A-38：401/415/403/穿越）', (
     expect(ok.status).toBe(200);
   });
 
-  it('text/plain POST /api/* → 415（P1-2-② 协议层拒绝）', async () => {
+  it('text/plain POST /api/* → 415（P1-2-② 协议层拒绝）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const dir = mkdtempSync(path.join(tmpdir(), 'shanhai-srv-'));
     const handle = await startTestServer(h.rt, dir, process.cwd());
@@ -234,7 +237,7 @@ describe('WP6B-4 门户 server：认证边界（A-38：401/415/403/穿越）', (
     expect(JSON.parse(res.body).code).toBe('unsupported_media_type');
   });
 
-  it('Host 头非本机地址 → 403（DNS rebinding 防护）', async () => {
+  it('Host 头非本机地址 → 403（DNS rebinding 防护）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const dir = mkdtempSync(path.join(tmpdir(), 'shanhai-srv-'));
     const handle = await startTestServer(h.rt, dir, process.cwd());
@@ -246,7 +249,7 @@ describe('WP6B-4 门户 server：认证边界（A-38：401/415/403/穿越）', (
     expect(JSON.parse(res.body).code).toBe('host_forbidden');
   });
 
-  it('静态面：/ → 200 text/html + nosniff；未知资产 → 404；路径穿越 → 404', async () => {
+  it('静态面：/ → 200 text/html + nosniff；未知资产 → 404；路径穿越 → 404', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const dir = mkdtempSync(path.join(tmpdir(), 'shanhai-srv-'));
     const handle = await startTestServer(h.rt, dir, process.cwd());
@@ -267,7 +270,7 @@ describe('WP6B-4 门户 server：认证边界（A-38：401/415/403/穿越）', (
     expect(traversal2.status).toBe(404);
   });
 
-  it('未知 /api 路由 → 404 结构化错误', async () => {
+  it('未知 /api 路由 → 404 结构化错误', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const dir = mkdtempSync(path.join(tmpdir(), 'shanhai-srv-'));
     const handle = await startTestServer(h.rt, dir, process.cwd());
@@ -278,7 +281,7 @@ describe('WP6B-4 门户 server：认证边界（A-38：401/415/403/穿越）', (
 });
 
 describe('WP6B-5 核心读面端点（A-37 部分：与 Manager 输出深度相等）', () => {
-  it('GET /api/tasks 与 listTasks 深度相等（过滤/分页参数透传）；/api/tasks/:id 与 getTask 深度相等', async () => {
+  it('GET /api/tasks 与 listTasks 深度相等（过滤/分页参数透传）；/api/tasks/:id 与 getTask 深度相等', { timeout: 20_000 }, async () => {
     const h = makeHarness([{ kind: 'text', text: validJson }]);
     registerAndRelease(h.rt, sampleSpec({ agentId: 'ep-a' }));
     const t1 = h.rt.tasks.createTask('ep-a', validInput, 't');
@@ -306,7 +309,7 @@ describe('WP6B-5 核心读面端点（A-37 部分：与 Manager 输出深度相�
     expect(badQuery.status).toBe(400);
   });
 
-  it('GET /api/approvals?pending= 与 approvals.list 深度相等（含惰性超时判定入口）；/api/approvals/:id 与 show 深度相等', async () => {
+  it('GET /api/approvals?pending= 与 approvals.list 深度相等（含惰性超时判定入口）；/api/approvals/:id 与 show 深度相等', { timeout: 20_000 }, async () => {
     const h = makeHarness([
       { kind: 'tool_use', calls: [{ id: 'a1', toolId: 'l3-op', args: { target: 'prod-db' } }] },
       { kind: 'text', text: validJson },

@@ -12,6 +12,8 @@ import { ResumeService } from '../src/portal/resume.js';
 //   构造审批（L3 挂起）→ 看到 Paused 任务 → 审批清单/详情 → approve → resume → 终态观测。
 // 这是「浏览器能看到 Paused → 查详情 → approve → 触发 resume → 观测终态」的 API 序列等价钉死：
 // 前端为静态资产（零构建），按钮接线=API 调用，故 API 序列断言即全链路契约（设计裁定 3 残余风险口径）。
+// 稳定性注（TASK-136，对齐 TASK-119 第五批口径）：本文件两用例均为真实 server 往返，
+//           统一显式 timeout=20s——防高负载下 vitest 缺省 5s 超时红（trend 族同机理余量不足）。
 
 const AUTH = { Authorization: 'Bearer test-token-0000000000000000000000000000', 'Content-Type': 'application/json' };
 
@@ -40,7 +42,7 @@ afterEach(async () => {
 // ---------- P2-5：headless API 全链路序列（浏览器 walkthrough 的契约形态） ----------
 
 describe('WP6B4-4 walkthrough 契约（P2-5）：构造审批 → approve → resume → 终态观测', () => {
-  it('全链路 API 序列（每步响应与库内状态一致）', async () => {
+  it('全链路 API 序列（每步响应与库内状态一致）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     registerL3Tool(h);
     registerAndRelease(h.rt, approvalSpec('walk-agent'));
@@ -127,7 +129,7 @@ describe('WP6B4-4 walkthrough 契约（P2-5）：构造审批 → approve → re
     expect(logBody.content).toContain('--resume');
   });
 
-  it('deny 支线：审批详情 → deny → 任务终态 cancelled(approval_denied)（walkthrough 拒绝路径契约）', async () => {
+  it('deny 支线：审批详情 → deny → 任务终态 cancelled(approval_denied)（walkthrough 拒绝路径契约）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     registerL3Tool(h);
     registerAndRelease(h.rt, approvalSpec('walk-deny'));

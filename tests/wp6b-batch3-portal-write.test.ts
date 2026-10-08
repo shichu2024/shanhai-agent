@@ -16,6 +16,9 @@ import { confirmCrashRecoveryText, cancelModeFor, approveActionHint, resumeNote 
 //           A-35 逃生侧（Running 僵尸行 → 显式崩溃恢复 → Failed(CrashRecovery)，事件序列与 CLI recover 等价）
 //           A-36（approve 后仍 paused；resume 以 nextCallRef 锚点放行；重复 resume CAS 失败无脏状态）
 //           P1-2-②（POST 强制 application/json → 415）于真实写端点复断言；P2-3（resume-log taskId 白名单）。
+// 稳定性注（TASK-136，对齐 TASK-119 第五批口径）：本文件真实 server 往返用例（经 startTestServer
+//           的 HTTP 用例）统一显式 timeout=20s——防高负载下 vitest 缺省 5s 超时红（trend 族同机理
+//           余量不足）；Manager 直调/文件系统/纯函数用例不加。
 
 const TOKEN = { Authorization: 'Bearer test-token-0000000000000000000000000000', 'Content-Type': 'application/json' };
 
@@ -123,7 +126,7 @@ function expectEventEquivalence(portalEvents: Record<string, unknown>[], cliEven
 // ---------- A-33：approve（≡ approval approve <id> --detach） ----------
 
 describe('WP6B3-1 POST /api/approvals/:id/approve（A-33/A-36：只写 decision，任务保持 Paused）', () => {
-  it('门户 approve 与 CLI 等价操作逐事件一致；响应 {taskId, decision, taskStatus:paused}', async () => {
+  it('门户 approve 与 CLI 等价操作逐事件一致；响应 {taskId, decision, taskStatus:paused}', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const a = await driveToPaused(h, 'wr-a');
     const b = await driveToPaused(h, 'wr-a');
@@ -142,7 +145,7 @@ describe('WP6B3-1 POST /api/approvals/:id/approve（A-33/A-36：只写 decision�
     expectEventEquivalence(h.rt.trace.readEvents(a.taskId), h.rt.trace.readEvents(b.taskId));
   });
 
-  it('decidedBy=who 来源标记（缺省 portal / operatorId 覆盖）；未知 requestId → 404', async () => {
+  it('decidedBy=who 来源标记（缺省 portal / operatorId 覆盖）；未知 requestId → 404', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const a = await driveToPaused(h, 'wr-who');
     const handle = await startTestServer(h.rt, { operatorId: 'ops-tony' });
@@ -161,7 +164,7 @@ describe('WP6B3-1 POST /api/approvals/:id/approve（A-33/A-36：只写 decision�
 // ---------- A-33：deny（≡ approval deny <id> [--reason <t>]） ----------
 
 describe('WP6B3-2 POST /api/approvals/:id/deny（A-33：任务终态 cancelled(approval_denied)）', () => {
-  it('带 reason 门户 deny 与 CLI 等价操作逐事件一致；快照删除', async () => {
+  it('带 reason 门户 deny 与 CLI 等价操作逐事件一致；快照删除', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const a = await driveToPaused(h, 'wr-d');
     const b = await driveToPaused(h, 'wr-d');
@@ -188,7 +191,7 @@ describe('WP6B3-2 POST /api/approvals/:id/deny（A-33：任务终态 cancelled(a
 // ---------- A-34：并发 approve CAS 透传 ----------
 
 describe('WP6B3-3 A-34 并发 approve：恰一方成功，另一方 already_decided→409', () => {
-  it('门户 vs 门户（并发两请求）', async () => {
+  it('门户 vs 门户（并发两请求）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const a = await driveToPaused(h, 'wr-cas');
     const handle = await startTestServer(h.rt);
@@ -201,7 +204,7 @@ describe('WP6B3-3 A-34 并发 approve：恰一方成功，另一方 already_deci
     expect(h.rt.approvals.getRequest(a.request.requestId)!.decision).toBe('approved');
   });
 
-  it('门户 vs 模拟 CLI 直写（Manager 先落库，门户后到 → 409）', async () => {
+  it('门户 vs 模拟 CLI 直写（Manager 先落库，门户后到 → 409）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const a = await driveToPaused(h, 'wr-cas2');
     h.rt.approvals.approve(a.request.requestId, 'cli');
@@ -216,7 +219,7 @@ describe('WP6B3-3 A-34 并发 approve：恰一方成功，另一方 already_deci
 // ---------- A-33/D-47：cancel（graceful≡task cancel；force≡--force；running+graceful 前置 409） ----------
 
 describe('WP6B3-4 POST /api/tasks/:id/cancel（A-33 + P3-1 前置校验）', () => {
-  it('queued + graceful：与 CLI 等价操作逐事件一致', async () => {
+  it('queued + graceful：与 CLI 等价操作逐事件一致', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     registerAndRelease(h.rt, sampleSpec({ agentId: 'wr-q' }));
     const a = h.rt.tasks.createTask('wr-q', validInput, 't');
@@ -231,7 +234,7 @@ describe('WP6B3-4 POST /api/tasks/:id/cancel（A-33 + P3-1 前置校验）', () 
     expectEventEquivalence(h.rt.trace.readEvents(a), h.rt.trace.readEvents(b));
   });
 
-  it('paused + graceful：立即取消 + pending superseded + 快照删除（与 CLI 等价一致）', async () => {
+  it('paused + graceful：立即取消 + pending superseded + 快照删除（与 CLI 等价一致）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const a = await driveToPaused(h, 'wr-p');
     const b = await driveToPaused(h, 'wr-p');
@@ -248,7 +251,7 @@ describe('WP6B3-4 POST /api/tasks/:id/cancel（A-33 + P3-1 前置校验）', () 
     expectEventEquivalence(h.rt.trace.readEvents(a.taskId), h.rt.trace.readEvents(b.taskId));
   });
 
-  it('running + graceful：服务端前置校验 409，不进 Manager（无状态变化、无 task_cancelled 事件）', async () => {
+  it('running + graceful：服务端前置校验 409，不进 Manager（无状态变化、无 task_cancelled 事件）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     registerAndRelease(h.rt, sampleSpec({ agentId: 'wr-r' }));
     const t = h.rt.tasks.createTask('wr-r', validInput, 't');
@@ -265,7 +268,7 @@ describe('WP6B3-4 POST /api/tasks/:id/cancel（A-33 + P3-1 前置校验）', () 
     expect(h.rt.trace.readEvents(t).length).toBe(eventsBefore); // 零事件（前置校验不进 Manager）
   });
 
-  it('running + force：abortRequested=1（≡ task cancel --force 跨进程路径）', async () => {
+  it('running + force：abortRequested=1（≡ task cancel --force 跨进程路径）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     registerAndRelease(h.rt, sampleSpec({ agentId: 'wr-f' }));
     const a = h.rt.tasks.createTask('wr-f', validInput, 't');
@@ -286,7 +289,7 @@ describe('WP6B3-4 POST /api/tasks/:id/cancel（A-33 + P3-1 前置校验）', () 
     expectEventEquivalence(h.rt.trace.readEvents(a), h.rt.trace.readEvents(b));
   });
 
-  it('body 校验：缺 mode / 非法 mode → 400；未知任务 → 404；text/plain → 415', async () => {
+  it('body 校验：缺 mode / 非法 mode → 400；未知任务 → 404；text/plain → 415', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     registerAndRelease(h.rt, sampleSpec({ agentId: 'wr-b' }));
     const t = h.rt.tasks.createTask('wr-b', validInput, 't');
@@ -306,7 +309,7 @@ describe('WP6B3-4 POST /api/tasks/:id/cancel（A-33 + P3-1 前置校验）', () 
 // ---------- D-46：resume + resume-log ----------
 
 describe('WP6B3-5 POST /api/tasks/:id/resume + GET resume-log（D-46/P2-3）', () => {
-  it('HTTP 立即返回 {spawned:true, logFile}；未知任务 → 404；resume-log 经端点可读', async () => {
+  it('HTTP 立即返回 {spawned:true, logFile}；未知任务 → 404；resume-log 经端点可读', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const a = await driveToPaused(h, 'wr-rs');
     const resume = new ResumeService({ dataDir: mkdtempSync(path.join(tmpdir(), 'shanhai-rs-')), repoRoot: process.cwd(), cliEntry: path.resolve('tests/fixtures/resumeChild.mjs') });
@@ -330,7 +333,7 @@ describe('WP6B3-5 POST /api/tasks/:id/resume + GET resume-log（D-46/P2-3）', (
     expect(missing.status).toBe(404);
   });
 
-  it('resume-log 端点：taskId 非法字符 → 400；无记录 → 404；内存索引与文件系统回落一致', async () => {
+  it('resume-log 端点：taskId 非法字符 → 400；无记录 → 404；内存索引与文件系统回落一致', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const handle = await startTestServer(h.rt);
     const bad = await request(handle.port, 'GET', '/api/tasks/..%2Fescape/resume-log', { Authorization: TOKEN.Authorization });
@@ -395,7 +398,7 @@ describe('WP6B3-5 POST /api/tasks/:id/resume + GET resume-log（D-46/P2-3）', (
 // ---------- A-36：resume 语义（锚点放行 + 重复 resume CAS） ----------
 
 describe('WP6B3-6 A-36 resume 语义（复用既有 resume 断言路径）', () => {
-  it('门户 approve 后 in-process resume（≡ 子进程同款调用）：nextCallRef 锚点放行至终态 + task_resumed(manual-resume)', async () => {
+  it('门户 approve 后 in-process resume（≡ 子进程同款调用）：nextCallRef 锚点放行至终态 + task_resumed(manual-resume)', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const a = await driveToPaused(h, 'wr-anchor');
     h.provider.script.push(RESUME_SCRIPT[0]); // resume 后首响应：终局文本（脚本序 = tool_use → text）
@@ -424,7 +427,7 @@ describe('WP6B3-6 A-36 resume 语义（复用既有 resume 断言路径）', () 
 // ---------- A-35 逃生侧：POST /api/portal/crash-recovery ----------
 
 describe('WP6B3-7 A-35 显式崩溃恢复（P1-1 逃生侧：≡ rt.startup() 全段 recover）', () => {
-  it('Running 僵尸行 → 门户崩溃恢复 → Failed(CrashRecovery)，事件序列与 CLI recover 等价；pending superseded + 快照清理 + 索引对账', async () => {
+  it('Running 僵尸行 → 门户崩溃恢复 → Failed(CrashRecovery)，事件序列与 CLI recover 等价；pending superseded + 快照清理 + 索引对账', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     // 僵尸 A：走门户显式恢复；僵尸 B：走 CLI 等价（rt.startup('cli')）
     const zA = await driveToPaused(h, 'wr-z');
@@ -551,7 +554,7 @@ describe('WP6B3-9 view/write 纯函数', () => {
 // ---------- 写面协议边界（补覆盖：413 / 非法 JSON / 未知 POST 路由 / 通用错误映射） ----------
 
 describe('WP6B3-10 写面协议边界（P1-2-② 与 body 解析）', () => {
-  it('POST 非法 JSON → 400；未知 POST 路由 → 404；GET 非法 status 过滤 → 400', async () => {
+  it('POST 非法 JSON → 400；未知 POST 路由 → 404；GET 非法 status 过滤 → 400', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const handle = await startTestServer(h.rt);
     const bad = await post(handle.port, '/api/portal/crash-recovery', '{not-json');
@@ -565,7 +568,7 @@ describe('WP6B3-10 写面协议边界（P1-2-② 与 body 解析）', () => {
     expect(badStatus.status).toBe(400);
   });
 
-  it('POST 请求体超 1 MiB → 413 payload_too_large（读侧丢弃不解析）', async () => {
+  it('POST 请求体超 1 MiB → 413 payload_too_large（读侧丢弃不解析）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const handle = await startTestServer(h.rt);
     const res = await request(

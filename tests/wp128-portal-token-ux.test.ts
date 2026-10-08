@@ -11,6 +11,9 @@ import { AUTH_EXPIRED_TEXT, UI_ERROR_TEXT, explainFailure } from '../src/portal/
 //   ① 服务端 401 message 去技术化（机器语义仍由 code=unauthorized 承载，协议本身不变）；
 //   ② 前端 401/未登录文案去技术化，且恢复路径指向「启动自动送达」而非要求用户操作口令；
 //   ③ 会话自动送达：文件托管形态每次启动恒拉起浏览器（wp6d 测试已随 TASK-128 修订）。
+// 稳定性注（TASK-136，对齐 TASK-119 第五批口径）：①节的两个真实 server 往返用例统一显式
+//           timeout=20s——防高负载下 vitest 缺省 5s 超时红（trend 族同机理余量不足）；
+//           ②③节为源契约/纯函数断言不加。
 
 const JARGON = /Bearer|Authorization/;
 
@@ -41,7 +44,7 @@ afterEach(async () => {
 });
 
 describe('TASK-128 服务端 401 message 去技术化（协议不变，文案面向最终用户）', () => {
-  it('无凭证 GET /api/tasks → 401 + code=unauthorized，message 无 Bearer/Authorization 字样', async () => {
+  it('无凭证 GET /api/tasks → 401 + code=unauthorized，message 无 Bearer/Authorization 字样', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const handle = await startPortalServer(h.rt, { dataDir: h.dataDir, repoRoot: h.repoRoot, host: '127.0.0.1', port: 0, token: 'test-token-0000000000000000000000000000' });
     servers.push(handle);
@@ -53,7 +56,7 @@ describe('TASK-128 服务端 401 message 去技术化（协议不变，文案面
     expect(body.message.length).toBeGreaterThan(0);
   });
 
-  it('错误凭证 → 同口径（错误口令不泄露协议细节）', async () => {
+  it('错误凭证 → 同口径（错误口令不泄露协议细节）', { timeout: 20_000 }, async () => {
     const h = makeHarness();
     const handle = await startPortalServer(h.rt, { dataDir: h.dataDir, repoRoot: h.repoRoot, host: '127.0.0.1', port: 0, token: 'test-token-0000000000000000000000000000' });
     servers.push(handle);
