@@ -26,9 +26,9 @@ const repoRoot = process.cwd();
 const dataDir = process.env.SHANHAI_DATA_DIR ?? defaultDataDir(repoRoot);
 
 function usage(): never {
-  console.log(`shanhai — 山海司 Runtime CLI（第一阶段 + 第二阶段批次一：审批 / Reviewed / 中止）
+  console.log(`shanhai — 山海司 Runtime CLI（规格驱动 Agent Runtime + 山海门户操作台 + 演进治理）
 
-用法：
+用法（顶层命令与 portal 旗标遇未知旗标/多余位置参数均 fail-fast 报错退出）：
   shanhai agent register <spec.json> [--by <who>] [--from-candidate <candidateId>]   （候选↔版本关联显式回填）
   shanhai agent release <agentId> <versionId> [--no-pointer] [--by <who>]
   shanhai agent review <agentId> <versionId> [--by <who>]          （Draft→Reviewed，diff 检视清单逐项确认）
