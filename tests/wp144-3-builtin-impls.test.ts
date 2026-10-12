@@ -51,16 +51,18 @@ describe('docs-read（124-128）', () => {
     expect(impls.get('docs-read')!({ file: '../escape.md' })).toEqual({ error: '文件不存在或越界' });
   });
 
-  it('file 为空串 → 解析为 docs 根自身（目录）→ 目录读取报错（108 边界分支现状钉死；见交付记录）', () => {
+  it('file 为空串 → 解析为 docs 根自身（目录）→ 结构化 error（TASK-148 收口，原抛 EISDIR）', () => {
     const { repoRoot } = buildRepo();
     const impls = createBuiltinImpls(repoRoot);
-    expect(() => impls.get('docs-read')!({ file: '' })).toThrow(/EISDIR/);
+    const out = impls.get('docs-read')!({ file: '' });
+    expect(typeof (out as Record<string, unknown>).error).toBe('string');
   });
 
-  it('file 非字符串 → 空串同路径（124 分支）→ 目录读取报错', () => {
+  it('file 非字符串 → 空串同路径（124 分支）→ 结构化 error（TASK-148 收口）', () => {
     const { repoRoot } = buildRepo();
     const impls = createBuiltinImpls(repoRoot);
-    expect(() => impls.get('docs-read')!({ file: 123 })).toThrow(/EISDIR/);
+    const out = impls.get('docs-read')!({ file: 123 });
+    expect(typeof (out as Record<string, unknown>).error).toBe('string');
   });
 
   it('>32KB 文件 → 32KB 截断 + 截断标记（128 分支）', () => {
