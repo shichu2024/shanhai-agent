@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, appendFileSync, mkdirSync } from 'node:fs';
+import { existsSync, statSync, readdirSync, readFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { ToolImpl } from '../modules/toolExecutor.js';
 import { defaultRedactionPolicy, redactString, type RedactionPolicy } from '../modules/redaction.js';
@@ -117,6 +117,8 @@ export function createBuiltinImpls(repoRoot: string, redaction: RedactionPolicy 
     const subdir = typeof args.subdir === 'string' ? args.subdir : '';
     const dir = safeResolve(docsRoot, subdir);
     if (!dir || !existsSync(dir)) return { error: '目录不存在或越界' };
+    // TASK-148：路径指向具体文件时 readdirSync 会抛裸 ENOTDIR——类型校验前置，结构化 error 返回。
+    if (!statSync(dir).isDirectory()) return { error: '路径不是目录' };
     return { entries: readdirSync(dir, { withFileTypes: true }).map((e) => ({ name: e.name, type: e.isDirectory() ? 'dir' : 'file' })) };
   });
 
@@ -124,6 +126,9 @@ export function createBuiltinImpls(repoRoot: string, redaction: RedactionPolicy 
     const file = typeof args.file === 'string' ? args.file : '';
     const resolved = safeResolve(docsRoot, file);
     if (!resolved || !existsSync(resolved)) return { error: '文件不存在或越界' };
+    // TASK-148：空串/非字符串 file 归一为 docs 根自身（safeResolve 对 resolved===root 放行），
+    // readFileSync(目录) 会抛裸 EISDIR——类型校验前置，结构化 error 返回。
+    if (!statSync(resolved).isFile()) return { error: '路径不是文件' };
     const content = readFileSync(resolved, 'utf8');
     return { path: file, size: content.length, content: content.length > 32768 ? content.slice(0, 32768) + '…[截断]' : content };
   });
