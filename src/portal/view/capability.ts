@@ -2,6 +2,7 @@
 
 import type { CapabilityRow } from '../../modules/capabilityRegistry.js';
 import type { CapabilityTrend } from '../../modules/trend.js';
+import { parseEvidenceRefs } from './evidenceRefs.js';
 
 const CAPABILITY_STATUS_LABELS: Record<string, string> = {
   candidate: '待确认',
@@ -19,7 +20,8 @@ export interface CapabilitySummary {
 }
 
 export function capabilitySummary(row: CapabilityRow): CapabilitySummary {
-  const evidenceCount = (JSON.parse(row.evidenceRefs) as unknown[]).length;
+  // TASK-157：malformed/非数组形态防御解析——非数组一律计 0（evidencePending 天然一致）
+  const evidenceCount = parseEvidenceRefs(row.evidenceRefs).length;
   return {
     capabilityId: row.capabilityId,
     agentId: row.agentId,
