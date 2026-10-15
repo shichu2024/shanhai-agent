@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import type { Runtime } from '../runtime.js';
 import type { TaskStatus } from '../types.js';
 import { apiErrorPayload, apiErrorStatus } from './errormap.js';
+import { parseEvidenceRefs } from './view/evidenceRefs.js';
 import { CAPABILITY_KINDS, type CapabilityRow } from '../modules/capabilityRegistry.js';
 import { buildCapabilityTrend } from '../modules/trend.js';
 import { buildAgentInsight } from '../modules/insight.js';
@@ -35,7 +36,8 @@ const CAPABILITY_STATUSES = new Set(['candidate', 'active', 'retired']);
 
 /** capability 列表行投影——与 CLI `capability list` 输出形状逐键一致（A-37，cli.ts 同款投影） */
 export function capabilityListRow(r: CapabilityRow): Record<string, unknown> {
-  const evidenceRefs = JSON.parse(r.evidenceRefs) as unknown[];
+  // TASK-157：防御解析——malformed 原直接抛（端点异常）；非数组形态 → []（evidencePending=true）
+  const evidenceRefs = parseEvidenceRefs(r.evidenceRefs);
   return {
     capabilityId: r.capabilityId,
     agentId: r.agentId,
