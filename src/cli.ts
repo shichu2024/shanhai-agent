@@ -12,7 +12,7 @@ import { buildAgentReport } from './modules/report.js';
 import { EvidenceRefError } from './modules/evidenceStore.js';
 import { CapabilityError, CAPABILITY_KINDS } from './modules/capabilityRegistry.js';
 import { buildCapabilityTrend, TREND_BUCKET_UNITS, TrendError } from './modules/trend.js';
-import { buildAgentInsight } from './modules/insight.js';
+import { buildAgentInsight, parseEvidenceRefs } from './modules/insight.js';
 import { connectMcpServer, type ToolCandidate } from './mcp/connect.js';
 import { loadRuntimeConfig } from './config.js';
 import { bootPortal, startPortalServer, parsePortalArgs, resolvePortalDataDir, printablePortalUrl } from './portal/server.js';
@@ -520,20 +520,23 @@ async function main(): Promise<void> {
           kind: (CAPABILITY_KINDS as readonly string[]).includes(kindFlag ?? '') ? (kindFlag as 'capability') : undefined,
           status: ['candidate', 'active', 'retired'].includes(statusFlag ?? '') ? (statusFlag as 'candidate') : undefined,
         });
-        console.log(JSON.stringify(rows.map((r) => ({
-          capabilityId: r.capabilityId,
-          agentId: r.agentId,
-          kind: r.kind,
-          origin: r.origin,
-          statement: r.statement,
-          statementDigest: r.statementDigest,
-          status: r.status,
-          evidenceRefs: JSON.parse(r.evidenceRefs),
-          evidencePending: (JSON.parse(r.evidenceRefs) as unknown[]).length === 0,
-          createdAt: r.createdAt,
-          decidedAt: r.decidedAt,
-          decidedBy: r.decidedBy,
-        })), null, 2));
+        console.log(JSON.stringify(rows.map((r) => {
+          const refs = parseEvidenceRefs(r.evidenceRefs);
+          return {
+            capabilityId: r.capabilityId,
+            agentId: r.agentId,
+            kind: r.kind,
+            origin: r.origin,
+            statement: r.statement,
+            statementDigest: r.statementDigest,
+            status: r.status,
+            evidenceRefs: refs,
+            evidencePending: refs.length === 0,
+            createdAt: r.createdAt,
+            decidedAt: r.decidedAt,
+            decidedBy: r.decidedBy,
+          };
+        }), null, 2));
       } else if (sub === 'add') {
         const [agentId] = pos;
         const kind = flagValue(rest, '--kind');
@@ -548,7 +551,7 @@ async function main(): Promise<void> {
         });
         console.log(JSON.stringify({
           ok: true, capabilityId: row.capabilityId, status: row.status,
-          evidencePending: (JSON.parse(row.evidenceRefs) as unknown[]).length === 0,
+          evidencePending: parseEvidenceRefs(row.evidenceRefs).length === 0,
         }, null, 2));
       } else if (sub === 'confirm') {
         const [capabilityId] = pos;

@@ -28,6 +28,22 @@ export type InsightCardField = (typeof INSIGHT_CARD_FIELD_KEYS)[number];
 /** 行为面缺省窗口（§4.4：趋势缺省近 30 天窗） */
 export const INSIGHT_WINDOW_DAYS_DEFAULT = 30;
 
+/**
+ * evidenceRefs 列防御解析（TASK-160，读面同族收口——TASK-157 终审备案 P3-2 裁量落地）。
+ * 语义基准与门户视图面 src/portal/view/evidenceRefs.ts 同构（核心层不反向依赖门户视图层，
+ * 局部实现）：JSON 数组 → 原样数组；malformed（parse 抛出）或合法 JSON 非数组形态
+ * （标量字符串/数字/布尔/null/对象）→ 空数组（evidenceCount=0、evidencePending=无证据=true、
+ * 引用计数跳过）。写入面（capabilityRegistry/evolution）恒为 JSON 数组，不在本收口范围。
+ */
+export function parseEvidenceRefs(raw: string): unknown[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export interface InsightDeps {
   db: Database.Database;
   trace: TraceRecorder;
@@ -103,13 +119,13 @@ export function buildAgentInsight(
     kind: r.kind,
     statement: r.statement,
     origin: r.origin,
-    evidenceCount: (JSON.parse(r.evidenceRefs) as unknown[]).length,
+    evidenceCount: parseEvidenceRefs(r.evidenceRefs).length,
   });
   const activeRows = rows.filter((r) => r.status === 'active');
   const candidateRows = rows.filter((r) => r.status === 'candidate');
   const evidenceSummary: Record<string, number> = {};
   for (const r of rows) {
-    for (const ref of JSON.parse(r.evidenceRefs) as { kind: string }[]) {
+    for (const ref of parseEvidenceRefs(r.evidenceRefs) as { kind: string }[]) {
       evidenceSummary[ref.kind] = (evidenceSummary[ref.kind] ?? 0) + 1; // 引用计数，不展开 payload
     }
   }
@@ -140,7 +156,7 @@ export function buildAgentInsight(
       },
       openCandidates: {
         total: candidateRows.length,
-        evidencePending: candidateRows.filter((r) => (JSON.parse(r.evidenceRefs) as unknown[]).length === 0).length,
+        evidencePending: candidateRows.filter((r) => parseEvidenceRefs(r.evidenceRefs).length === 0).length,
       },
       emptyHint:
         rows.length === 0
