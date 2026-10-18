@@ -1827,7 +1827,25 @@ ${String(res.data.content ?? "").slice(0, 4e3)}${res.data.truncated ? "\n……�
   }
   function capRowsOf(data) {
     const rows = Array.isArray(data) ? data : [];
-    return rows.filter((r) => isRecord2(r) && typeof r.capabilityId === "string" && typeof r.status === "string" && typeof r.agentId === "string");
+    const mapped = [];
+    for (const r of rows) {
+      if (!isRecord2(r) || typeof r.capabilityId !== "string" || typeof r.status !== "string" || typeof r.agentId !== "string") continue;
+      const refs = Array.isArray(r.evidenceRefs) ? r.evidenceRefs : [];
+      mapped.push({
+        capabilityId: r.capabilityId,
+        agentId: r.agentId,
+        kind: typeof r.kind === "string" ? r.kind : "",
+        origin: typeof r.origin === "string" ? r.origin : "",
+        statement: typeof r.statement === "string" ? r.statement : "",
+        status: r.status,
+        evidenceRefCount: refs.length,
+        evidencePending: r.evidencePending === true || refs.length === 0,
+        createdAt: typeof r.createdAt === "string" ? r.createdAt : "",
+        decidedAt: typeof r.decidedAt === "string" ? r.decidedAt : null,
+        decidedBy: typeof r.decidedBy === "string" ? r.decidedBy : null
+      });
+    }
+    return mapped;
   }
   function mountObserveCapabilitiesPage(ctx, query) {
     let filters = parseCapabilityFilters(query);

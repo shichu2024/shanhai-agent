@@ -45,10 +45,31 @@ function taskAgentRowsOf(data: unknown): Array<{ agentId: string }> {
   return body.filter((r): r is { agentId: string } => isRecord(r) && typeof r.agentId === 'string');
 }
 
-function capRowsOf(data: unknown): CapabilityRowUi[] {
+/** API 行（capabilityListRow 投影，api.ts:38-54）→ UI 模型显式投影。
+ *  TASK-167（D1 修复）：API 投影无 evidenceRefCount 键，视图读 r.evidenceRefCount 恒 undefined 上屏
+ *  （7-3 原实现将 API 行原样断言为 UI 模型，类型擦除掩盖缺键）。此处从 evidenceRefs 派生计数，
+ *  evidencePending 兜底（非数组/空数组 → true），防再次类型擦除掩盖缺键。 */
+export function capRowsOf(data: unknown): CapabilityRowUi[] {
   const rows = Array.isArray(data) ? data : [];
-  return rows.filter((r): r is CapabilityRowUi =>
-    isRecord(r) && typeof r.capabilityId === 'string' && typeof r.status === 'string' && typeof r.agentId === 'string');
+  const mapped: CapabilityRowUi[] = [];
+  for (const r of rows) {
+    if (!isRecord(r) || typeof r.capabilityId !== 'string' || typeof r.status !== 'string' || typeof r.agentId !== 'string') continue;
+    const refs = Array.isArray(r.evidenceRefs) ? r.evidenceRefs : [];
+    mapped.push({
+      capabilityId: r.capabilityId,
+      agentId: r.agentId,
+      kind: typeof r.kind === 'string' ? r.kind : '',
+      origin: typeof r.origin === 'string' ? r.origin : '',
+      statement: typeof r.statement === 'string' ? r.statement : '',
+      status: r.status,
+      evidenceRefCount: refs.length,
+      evidencePending: r.evidencePending === true || refs.length === 0,
+      createdAt: typeof r.createdAt === 'string' ? r.createdAt : '',
+      decidedAt: typeof r.decidedAt === 'string' ? r.decidedAt : null,
+      decidedBy: typeof r.decidedBy === 'string' ? r.decidedBy : null,
+    });
+  }
+  return mapped;
 }
 
 export function mountObserveCapabilitiesPage(ctx: PageCtx, query: Record<string, string>): PageHandle {
