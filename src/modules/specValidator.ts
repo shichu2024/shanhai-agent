@@ -4,11 +4,11 @@ import { checkSubset, validateInstance, type ContractViolation, type SubsetViola
 // A1 §2–§3 字段表 → zod 元 Schema；A1 §4 + A3 §3.1 两层校验职责 → 两个入口函数。
 // D-1 附条件落地：注册拒绝错误信息必须指名字段路径。
 
-const jsonSchemaNode = z.record(z.unknown());
+const jsonSchemaNode = z.record(z.string(), z.unknown());
 
 const metaSchema = z
   .object({
-    specVersion: z.literal('1', { errorMap: () => ({ message: 'specVersion 必须为 "1"' }) }),
+    specVersion: z.literal('1', { error: 'specVersion 必须为 "1"' }),
     identity: z.object({
       agentId: z.string().regex(/^[a-z][a-z0-9-]{1,63}$/, '须匹配 ^[a-z][a-z0-9-]{1,63}$'),
       name: z.string().min(1).max(64),
@@ -38,7 +38,7 @@ const metaSchema = z
             riskLevel: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']),
             controlledFields: z
               .object({
-                paramRanges: z.record(z.unknown()).optional(),
+                paramRanges: z.record(z.string(), z.unknown()).optional(),
                 targetWhitelist: z.array(z.string()).optional(),
               })
               .strict()
@@ -72,7 +72,7 @@ const metaSchema = z
       .optional(),
     approvalPolicy: z // v1.1 增补（A1 §2.2，D-8/D-9/D-18）：缺省 = 无审批路径（V1 行为不变）
       .object({
-        mode: z.enum(['never', 'onHighRisk'], { errorMap: () => ({ message: 'approvalPolicy.mode 仅为 never/onHighRisk（always 注册拒绝，防伪声明——D-9）' }) }),
+        mode: z.enum(['never', 'onHighRisk'], { error: 'approvalPolicy.mode 仅为 never/onHighRisk（always 注册拒绝，防伪声明——D-9）' }),
         timeoutMs: z.number().int().min(1000).optional(),
         onTimeout: z.enum(['deny', 'fail']).optional(),
       })
@@ -85,7 +85,7 @@ const metaSchema = z
         failureThreshold: z.number().int().min(1).optional(),
         guardrails: z
           .object({
-            requireReviewed: z.literal(true, { errorMap: () => ({ message: 'guardrails.requireReviewed 强制 true（D-14：变更面受控不可关闭）' }) }),
+            requireReviewed: z.literal(true, { error: 'guardrails.requireReviewed 强制 true（D-14：变更面受控不可关闭）' }),
           })
           .optional(),
       })
