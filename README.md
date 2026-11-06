@@ -164,3 +164,7 @@ npm run experiment   # 3 类 Spec × 10 任务 × 策略 A/B，报告输出至 e
 ```
 
 制品（Specs + 任务集）冻结于启动前 Git 哈希（11 号 §2.2 制品冻结裁定）。
+
+## 许可证
+
+本项目以 [Apache License 2.0](LICENSE) 授权发布。

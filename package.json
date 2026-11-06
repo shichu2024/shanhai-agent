@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "山海司 Agent 工程平台 · 第一阶段最小 Runtime（WP-B）",
   "type": "module",
+  "license": "Apache-2.0",
   "main": "dist/index.js",
   "bin": {
     "shanhai": "dist/cli.js"
