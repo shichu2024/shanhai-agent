@@ -15,7 +15,7 @@ npm install
 npm run build                                    # tsc 产出 dist/
 cp config.example.json config.local.json         # 按需修改 baseUrl / 模型白名单（已入 .gitignore）
 export SHANHAI_ANTHROPIC_AUTH_TOKEN=<你的密钥>    # T3：密钥仅环境变量注入，仓库只留占位
-npm test                                         # 778 项测试，statements 覆盖率 96.36%
+npm test                                         # 942 项测试，statements 覆盖率 95.59%（vitest v8 工具链 v5 口径）
 npm run build:portal                             # 门户 UI 产物（tsc + esbuild，直出 src/portal/public/）
 ```
 
@@ -152,8 +152,8 @@ MCP server 凭据唯一通道为 `envRefs` 环境变量引用占位（`${VAR}`�
 
 | 项 | 基线 | 口径 |
 |---|---|---|
-| 测试 | 778/778 全绿 | `npm test`（vitest run） |
-| 覆盖率 | statements 96.36% | vitest v8 text 报表；口径见 `vitest.config.ts`（include `src/**/*.ts`，排除 cli/config/experiment/providers 适配层） |
+| 测试 | 942/942 全绿 | `npm test`（vitest run） |
+| 覆盖率 | statements 95.59% | vitest v8（vitest 5 工具链）text 报表——工具链升级后按同套件定义重锚；口径见 `vitest.config.ts`（include `src/**/*.ts`，排除 cli/config/experiment/providers 适配层） |
 | 类型 | `tsc` 0 错 | `npm run build` |
 | T3 扫描 | 零命中 | `npm run release-scan` |
 
