@@ -136,13 +136,13 @@ describe('DoD-⑤ Reviewed 版本环（A5 §1 v1.1，D-10）', () => {
     } catch (err) {
       expect((err as { issues: { message: string }[] }).issues.some((i) => i.message.includes('L3') || i.message.includes('onHighRisk'))).toBe(true);
     }
-    // mode=always → 拒（防伪声明，D-9；zod 枚举拒绝，错误信息含 always 注册拒绝）
+    // mode=always → 拒（防伪声明，D-9；zod 枚举拒绝，错误信息逐字全串断言，文案出处 src/modules/specValidator.ts:75）
     const alwaysSpec = sampleSpec({ agentId: 'rv-l3-always', tools: [{ toolId: 'docs-list', riskLevel: 'L0' }], extraTop: { approvalPolicy: { mode: 'always' } } });
     try {
       h.rt.registry.registerSpec(alwaysSpec, 'a', validationDepsOf(h.rt));
       expect.unreachable('应当注册拒绝');
     } catch (err) {
-      expect((err as { issues: { path: string; message: string }[] }).issues.some((i) => i.path.includes('approvalPolicy') && i.message.includes('always'))).toBe(true);
+      expect((err as { issues: { path: string; message: string }[] }).issues.some((i) => i.path === 'approvalPolicy.mode' && i.message === 'approvalPolicy.mode 仅为 never/onHighRisk（always 注册拒绝，防伪声明——D-9）')).toBe(true);
     }
     // 声明 onHighRisk → 放行
     const versionId = h.rt.registry.registerSpec(approvalSpec('rv-l3-ok'), 'a', validationDepsOf(h.rt));

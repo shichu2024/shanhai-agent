@@ -102,7 +102,8 @@ describe('A1 §4 注册准入校验', () => {
     const noGuardrail = sampleSpec({ extraTop: { evolutionPolicy: { allowed: true, guardrails: { requireReviewed: false } } } });
     const guardResult = validateRegistration(noGuardrail, validationDepsOf(harness.rt));
     expect(guardResult.ok).toBe(false);
-    expect(guardResult.issues.some((i) => i.message.includes('requireReviewed'))).toBe(true); // DoD-⑦ 不可关闭
+    // DoD-⑦ 不可关闭；逐字全串断言（自定义文案出处 src/modules/specValidator.ts:88）
+    expect(guardResult.issues.some((i) => i.path === 'evolutionPolicy.guardrails.requireReviewed' && i.message === 'guardrails.requireReviewed 强制 true（D-14：变更面受控不可关闭）')).toBe(true);
   });
 
   it('memoryPolicy v1.1（A1 §2.1，D-13）：persistent 合法（injection 默认 off 由缺省承担）；非法取值仍拒', () => {
@@ -112,7 +113,11 @@ describe('A1 §4 注册准入校验', () => {
     const full = sampleSpec({ extraTop: { memoryPolicy: { type: 'persistent', writePolicy: 'task_output', maxEntriesPerTask: 5, retentionDays: 30, injection: 'context' } } });
     expect(validateRegistration(full, validationDepsOf(harness.rt)).ok).toBe(true);
     const bogus = sampleSpec({ extraTop: { memoryPolicy: { type: 'bogus' } } });
-    expect(validateRegistration(bogus, validationDepsOf(harness.rt)).ok).toBe(false);
+    const bogusResult = validateRegistration(bogus, validationDepsOf(harness.rt));
+    expect(bogusResult.ok).toBe(false);
+    // 逐字全串断言：此处无自定义文案（防伪声明由 zod union literal 承担，src/modules/specValidator.ts:61-72），
+    // zod 4 union 失败的 message 字段运行时实际输出即为 'Invalid input'，按实钉死
+    expect(bogusResult.issues.some((i) => i.path === 'memoryPolicy' && i.message === 'Invalid input')).toBe(true);
     const badInjection = sampleSpec({ extraTop: { memoryPolicy: { type: 'persistent', injection: 'always' } } });
     expect(validateRegistration(badInjection, validationDepsOf(harness.rt)).ok).toBe(false);
   });
