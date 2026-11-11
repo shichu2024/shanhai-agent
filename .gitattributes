@@ -4,3 +4,8 @@ src/portal/public/app.js -text
 src/portal/public/style.css -text
 # 许可证全文：跨平台以 blob 字节为基准，钉 -text 防 EOL 转换（Apache-2.0 标准文本）。
 LICENSE -text
+# 仓库根元数据文件：跨平台以 blob 字节为基准，钉 -text 防 EOL 转换（TASK-229 备案 P3-② 顺带收口）。
+# 根锚定（/ 前缀）：只钉仓库根的 README/package.json——basename 模式会波及任意深度的同名文件
+#（如 tests/fixtures/positive-controls/README.md 出现幻影 EOL diff），夹具/子包不属本钉定意图。
+/README.md -text
+/package.json -text
