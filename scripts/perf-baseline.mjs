@@ -2,13 +2,13 @@
 // TASK-235（每日优化第二十九批）性能基线脚本（新维度首探）。
 //
 // 用法（仓库根目录，须先 npm ci && npm run build 出 dist/cli.js）：
-//   node scripts/perf-baseline.mjs [--out <file>] [--port 17970] [--samples 60] [--cli-samples 12]
+//   node scripts/perf-baseline.mjs [--out <file>] [--port 17970] [--samples 300] [--cli-samples 16]
 //
 // 度量面（本机开发机口径，非 CI 基准——建档批不设门，见 docs/performance-baseline.md）：
 //   ① 门户核心读端点延迟：独立临时 dataDir + 种子（复用 smoke/walkthrough 种子机制：
-//      CLI 基础种子 → SQLite 直写扩展种子），起 dist 门户，对核心读端点各打点 N（缺省 60）
+//      CLI 基础种子 → SQLite 直写扩展种子），起 dist 门户，对核心读端点各打点 N（缺省 300）
 //      次取 P50/P95（含 Token 鉴权与 Host 门，真实 HTTP 往返）；
-//   ② CLI 冷启动：`node dist/cli.js`（无参 usage 路径）计时 N（缺省 12）次取 P50/P95。
+//   ② CLI 冷启动：`node dist/cli.js`（无参 usage 路径）计时 N（缺省 16）次取 P50/P95。
 //
 // 输出：结构化 JSON（--out 落盘）+ 人读表格（stdout）。
 // 清理：跑完删除临时 dataDir、taskkill 整树终止门户子进程、exit 事件确认，零残留。

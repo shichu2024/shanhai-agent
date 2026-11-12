@@ -11,6 +11,16 @@ export default defineConfig({
   test: {
     coverage: {
       provider: 'v8',
+      // 覆盖率门禁（TASK-238 每日优化第三十批）：`npm test` 即生效（enabled: true），
+      // statements 阈值从 coverage 数据（json-summary）计算，免疫 v5 text 报表
+      // 省略行显示缺陷（TASK-174 备案 P3-①）。
+      // 起步锚 95.5% = 当前基线 95.59% 减 0.09pp 保守余量；仅 statements 一列
+      // （循环单调门锚），branches/lines 不设防避免结构性不可达噪声。
+      // 阈值随基线上浮由后续批次调整。
+      enabled: true,
+      thresholds: {
+        statements: 95.5,
+      },
       include: ['src/**/*.ts'],
       exclude: [
         'src/cli.ts',
