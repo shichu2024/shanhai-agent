@@ -16,10 +16,10 @@ export default defineConfig({
       // 省略行显示缺陷（TASK-174 备案 P3-①）。
       // 起步锚 95.5% = 当前基线 95.59% 减 0.09pp 保守余量；仅 statements 一列
       // （循环单调门锚），branches/lines 不设防避免结构性不可达噪声。
-      // 阈值随基线上浮由后续批次调整。
+      // 阈值随基线上浮由后续批次调整：TASK-241 收紧至 95.55（余量 0.04pp）。
       enabled: true,
       thresholds: {
-        statements: 95.5,
+        statements: 95.55,
       },
       include: ['src/**/*.ts'],
       exclude: [
