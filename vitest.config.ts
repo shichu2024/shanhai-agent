@@ -27,11 +27,15 @@ export default defineConfig({
       //     模块级 Set 常量）v8 口径实测 0/1，覆盖率统计结构性失真，不设地板。
       // TASK-244 棘轮第一档：contractSchema.ts 补齐低频拒绝分支用例后实测 100%
       // （124/124），专用例外条目（例外地板 74）回收删除，该文件并入主地板 glob。
+      // TASK-245 目录兜底：modules glob 由单层 `src/modules/*.ts` 收敛为递归
+      // `src/modules/**/*.ts`（** 匹配零或多层目录，对现行平铺文件集合语义等价），
+      // 未来 src/modules/ 下新增子目录文件自动落入主地板 80，不留执法空隙；
+      // 其余 src 目录本已是 `**` 递归形态，无需调整。
       enabled: true,
       thresholds: {
         statements: 95.55,
         'src/!(types).ts': { perFile: { statements: 80 } },
-        'src/modules/*.ts': { perFile: { statements: 80 } },
+        'src/modules/**/*.ts': { perFile: { statements: 80 } },
         'src/{portal,mcp,runtime,scripts,tools,providers}/**': { perFile: { statements: 80 } },
       },
       include: ['src/**/*.ts'],
