@@ -20,7 +20,9 @@ export default defineConfig({
       // TASK-251 第三十九批棘轮再进一档至 96.1（基线 fdfc06a 实测 96.22%，余量 0.12pp）；
       // TASK-252 第四十批棘轮再进一档至 96.2（基线 ae6b3f2 实测 96.24%，
       // 双方独立复现逐位一致，余量 0.04pp 沿 TASK-241 同等余量先例；
-      // 若门禁跑出波动红允许回落至 96.15 并在交付中声明实测值与取舍）。
+      // 若门禁跑出波动红允许回落至 96.15 并在交付中声明实测值与取舍）；
+      // TASK-255 第四十三批棘轮再进一档至 96.6（基线 b2aaeb5 实测 96.69%
+      // （交付）/96.71%（反方），余量约 0.09-0.11pp，吸收 ±1 条同族波动）。
       // 逐文件地板门（TASK-243 每日优化第三十三批，TASK-174 备案 P3-① 落地）：
       // vitest v5 语义下根级 perFile: true 会使全局聚合阈值（95.55）逐文件执法，
       // 故逐文件门采用 glob 条目携带 perFile 对象形态（语义等价：匹配文件逐文件 statements 地板）。
@@ -46,7 +48,7 @@ export default defineConfig({
       // 备案随 TASK-243 备案例外一并记录，不借本批扩大回收。
       enabled: true,
       thresholds: {
-        statements: 96.2,
+        statements: 96.6,
         'src/**/!(types).ts': { perFile: { statements: 80 } },
       },
       include: ['src/**/*.ts'],

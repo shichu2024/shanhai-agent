@@ -11,8 +11,8 @@ import type { ChatRequest, ModelProvider, ProviderResponse } from '../src/provid
 // ============================================================
 // TASK-254（第四十二批覆盖加固）：针对 a9c0405 基线 statements 缺口 185 条中
 // 可测价值面（错误分支/边界条件）的定向用例，不为凑指标刷行数。
-// 覆盖面：specValidator 注册拒绝细分 ×6、evidence T1/T2/T2' 缺失防御 ×4、
-// MCP client 分发防御 ×5、MemoryManager 去重/上限/无效 ID ×5、ModelGateway 错误分类 ×4。
+// 覆盖面：specValidator 注册拒绝细分 ×6、evidence T1/T2/T2' 缺失防御 ×3、
+// MCP client 分发防御 ×4、MemoryManager 去重/上限/无效 ID ×3、ModelGateway 错误分类 ×4。
 // ============================================================
 
 describe('TASK-254 覆盖加固：specValidator 注册准入拒绝细分分支', () => {
