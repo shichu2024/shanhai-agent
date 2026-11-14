@@ -28,15 +28,22 @@ export default defineConfig({
       // TASK-244 棘轮第一档：contractSchema.ts 补齐低频拒绝分支用例后实测 100%
       // （124/124），专用例外条目（例外地板 74）回收删除，该文件并入主地板 glob。
       // TASK-245 目录兜底：modules glob 由单层 `src/modules/*.ts` 收敛为递归
-      // `src/modules/**/*.ts`（** 匹配零或多层目录，对现行平铺文件集合语义等价），
-      // 未来 src/modules/ 下新增子目录文件自动落入主地板 80，不留执法空隙；
-      // 其余 src 目录本已是 `**` 递归形态，无需调整。
+      // `src/modules/**/*.ts`（** 匹配零或多层目录，对现行平铺文件集合语义等价）。
+      // TASK-246 全树兜底收口（P2 备案转化）：逐文件地板 perFile glob 由
+      // 「顶层 `src/!(types).ts` + 六目录递归」三条收敛为单条全树递归兜底
+      // `src/**/!(types).ts`（** 匹配零或多层目录）——src 全树任意深度 .ts 文件
+      // （含未来新建顶层目录）均落入主地板 80，消除「目录内递归、顶层新目录逃门」
+      // 的最后执法空隙。语义等价实证：对现行 87 个执法文件（报告文件 88 减
+      // src/types.ts）逐文件前后集合完全一致（tinyglobby 实测 + 全量跑门）。
+      // 名义豁免面披露：`!(types)` 形态豁免任意目录下名为 types.ts 的文件——
+      // 现行全树仅顶层 src/types.ts（既有例外，语义不变）与 src/providers/types.ts
+      // （coverage exclude 既有排除面，本就不受地板执法）；嵌套 types.ts 现不存在，
+      // 未来若新增将不受逐文件地板约束（仍受全局聚合门 95.55 约束）——结构性失真
+      // 备案随 TASK-243 备案例外一并记录，不借本批扩大回收。
       enabled: true,
       thresholds: {
         statements: 95.55,
-        'src/!(types).ts': { perFile: { statements: 80 } },
-        'src/modules/**/*.ts': { perFile: { statements: 80 } },
-        'src/{portal,mcp,runtime,scripts,tools,providers}/**': { perFile: { statements: 80 } },
+        'src/**/!(types).ts': { perFile: { statements: 80 } },
       },
       include: ['src/**/*.ts'],
       exclude: [
