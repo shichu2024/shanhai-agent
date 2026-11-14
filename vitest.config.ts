@@ -32,6 +32,9 @@ export default defineConfig({
         statements: 95.55,
         'src/!(types).ts': { perFile: { statements: 80 } },
         'src/modules/!(contractSchema).ts': { perFile: { statements: 80 } },
+        // P2-① 补修（反方复核/决策官裁决）：排他 glob + 专用条目（非重叠例外），
+        // 使「例外地板 74」声明与实现严格对齐——该条目执法生效已由 76 阈值红门实证。
+        'src/modules/contractSchema.ts': { perFile: { statements: 74 } },
         'src/{portal,mcp,runtime,scripts,tools,providers}/**': { perFile: { statements: 80 } },
       },
       include: ['src/**/*.ts'],
