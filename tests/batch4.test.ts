@@ -83,7 +83,8 @@ describe('DoD-②/③/④ T3 扫描清单配置化 + 阳性对照 + 夹具豁免
     expect(findings.filter((f) => f.kind === 'model_weight')).toHaveLength(3); // 扩展名/魔数/safetensors 各一
   });
 
-  it('DoD-② 夹具豁免规则（豁免入配置、可审计——P2-4）+ D-21 豁免锚定：仓库根扫描夹具零误报；子树/夹具根直接扫描不再静默豁免', () => {
+  // TASK-256：全仓扫描 ×3（仓库根/夹具/ tests 子树），隔离态 ~0.8s、负载态实测 6.3s（默认 5000ms 超时抖动）——显式 15000ms 消除抖动
+  it('DoD-② 夹具豁免规则（豁免入配置、可审计——P2-4）+ D-21 豁免锚定：仓库根扫描夹具零误报；子树/夹具根直接扫描不再静默豁免', { timeout: 15000 }, () => {
     expect(DEFAULT_SCAN_CONFIG.exemptions.length).toBeGreaterThanOrEqual(1);
     expect(DEFAULT_SCAN_CONFIG.exemptions[0].reason).toBeTruthy(); // 无理由的豁免不允许
     // 仓库根口径：豁免段序列 = 扫描根相对路径前缀（tests/fixtures/positive-controls）→ 夹具零误报
@@ -117,7 +118,8 @@ function toForward(p: string): string {
     expect(findings[0].detail).toContain('safetensors');
   });
 
-  it('DoD-④ T3 断言在新（配置化）清单上全过：仓库根默认配置扫描零命中', () => {
+  // TASK-256：同族全仓扫描用例（隔离态 ~0.7s，负载态尖峰同 7.5× 量级即逼近 5000ms）——同批显式加固
+  it('DoD-④ T3 断言在新（配置化）清单上全过：仓库根默认配置扫描零命中', { timeout: 15000 }, () => {
     // 等价 npm run release-scan（同 DEFAULT_SCAN_CONFIG + 内置豁免）；夹具目录被豁免覆盖
     const findings = scanForRelease(process.cwd(), DEFAULT_SCAN_CONFIG);
     expect(findings).toEqual([]); // 新清单 + safetensors 嗅探 + 豁免——零命中通过
