@@ -152,8 +152,8 @@ MCP server 凭据唯一通道为 `envRefs` 环境变量引用占位（`${VAR}`�
 
 | 项 | 基线 | 口径 |
 |---|---|---|
-| 测试 | 942/942 全绿 | `npm test`（vitest run） |
-| 覆盖率 | statements 95.59%（全局门 ≥95.55）+ 逐文件地板 80 | vitest v8（vitest 5 工具链）text 报表——工具链升级后按同套件定义重锚；口径见 `vitest.config.ts`（include `src/**/*.ts`，排除 cli/config/experiment/providers 适配层；逐文件地板备案例外 `src/types.ts`（类型定义文件）与 `src/modules/contractSchema.ts`（例外地板 74）） |
+| 测试 | 954/954 全绿 | `npm test`（vitest run） |
+| 覆盖率 | statements 96.22%（全局门 ≥95.55）+ 逐文件地板 80 | vitest v8（vitest 5 工具链）text 报表——工具链升级后按同套件定义重锚；口径见 `vitest.config.ts`（include `src/**/*.ts`，排除 cli/config/experiment/providers 适配层；逐文件地板备案例外 `src/types.ts`（类型定义文件）；contractSchema 例外已随 TASK-244 用例补齐回收，并入主地板） |
 | 类型 | `tsc` 0 错 | `npm run build` |
 | T3 扫描 | 零命中 | `npm run release-scan` |
 
