@@ -20,21 +20,18 @@ export default defineConfig({
       // 逐文件地板门（TASK-243 每日优化第三十三批，TASK-174 备案 P3-① 落地）：
       // vitest v5 语义下根级 perFile: true 会使全局聚合阈值（95.55）逐文件执法，
       // 故逐文件门采用 glob 条目携带 perFile 对象形态（语义等价：匹配文件逐文件 statements 地板）。
-      // 主地板 80：基线 f7c5009 实测（json-summary），排除下述两例备案例外后，
+      // 主地板 80：基线 f7c5009 实测（json-summary），排除下述备案例外后，
       // 最低真文件为 portal/ui/observeEvidencePage.ts 81.70%，地板 80 留 1.7pp 余量。
       // 备案例外（逐个说明，不为过门改测试；例外文件不设主地板）：
       //   src/types.ts —— 纯封闭集类型定义文件，唯一可执行语句（TERMINAL_STATUSES
-      //     模块级 Set 常量）v8 口径实测 0/1，覆盖率统计结构性失真，不设地板；
-      //   src/modules/contractSchema.ts —— 实测 75.00%（93/124，A2 §6 冻结子集规则
-      //     低频拒绝分支），例外地板 74（1pp 余量），后续批次随用例补齐可回收。
+      //     模块级 Set 常量）v8 口径实测 0/1，覆盖率统计结构性失真，不设地板。
+      // TASK-244 棘轮第一档：contractSchema.ts 补齐低频拒绝分支用例后实测 100%
+      // （124/124），专用例外条目（例外地板 74）回收删除，该文件并入主地板 glob。
       enabled: true,
       thresholds: {
         statements: 95.55,
         'src/!(types).ts': { perFile: { statements: 80 } },
-        'src/modules/!(contractSchema).ts': { perFile: { statements: 80 } },
-        // P2-① 补修（反方复核/决策官裁决）：排他 glob + 专用条目（非重叠例外），
-        // 使「例外地板 74」声明与实现严格对齐——该条目执法生效已由 76 阈值红门实证。
-        'src/modules/contractSchema.ts': { perFile: { statements: 74 } },
+        'src/modules/*.ts': { perFile: { statements: 80 } },
         'src/{portal,mcp,runtime,scripts,tools,providers}/**': { perFile: { statements: 80 } },
       },
       include: ['src/**/*.ts'],
