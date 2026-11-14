@@ -81,7 +81,8 @@ describe('A-3 T3 CLI 级 exit 码三元组（命中=1 / 干净=0 / 未扫描=2�
     expect(out).toContain('positive-control.safetensors');
   });
 
-  it('根省缺 → 以 cwd 为扫描根（真实 npm run release-scan 形态）', () => {
+  // TASK-256：同族全仓扫描用例（cwd 为根，隔离态 ~0.8s，负载态尖峰同 7.5× 量级即逼近 5000ms）——同批显式加固
+  it('根省缺 → 以 cwd 为扫描根（真实 npm run release-scan 形态）', { timeout: 15000 }, () => {
     // 仓库根默认配置：零命中 → exit 0（等价 npm run release-scan 的 cwd 语义）
     const r = cli([], process.cwd());
     expect(r.code).toBe(0);
