@@ -50,7 +50,7 @@ export default defineConfig({
       // 备案随 TASK-243 备案例外一并记录，不借本批扩大回收。
       enabled: true,
       thresholds: {
-        statements: 97.2,
+        statements: 97.4,
         'src/**/!(types).ts': { perFile: { statements: 80 } },
       },
       include: ['src/**/*.ts'],
