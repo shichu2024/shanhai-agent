@@ -9,7 +9,8 @@ import {
 } from './helpers.js';
 
 // wp257（第四十五批 · 覆盖加固蓄余量）：纯测试触达的低风险只读/错误分支补测。
-// 覆盖面分组：taskManager 错误分支 ×9 / approval 错误分支 ×2 / toolExecutor 闸门与实现解析 ×3 / mcp client 错误响应 ×2。
+// 覆盖面分组：taskManager 错误分支 ×8 / approval 错误分支 ×2 / toolExecutor 闸门与实现解析 ×2 / mcp client 错误响应 ×1（合计 13）。
+// 注意：toolExecutor.ts L213 仍未覆盖（该文件 119/120）——本文件不构成其全覆盖证据，防后续批次误判（第四十六批 TASK-258 注释修正备案）。
 // 零 src 改动、零门值改动、零既有用例改动。
 
 const validJson = JSON.stringify(validOutput());
