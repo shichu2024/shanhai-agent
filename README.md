@@ -15,7 +15,7 @@ npm install
 npm run build                                    # tsc 产出 dist/
 cp config.example.json config.local.json         # 按需修改 baseUrl / 模型白名单（已入 .gitignore）
 export SHANHAI_ANTHROPIC_AUTH_TOKEN=<你的密钥>    # T3：密钥仅环境变量注入，仓库只留占位
-npm test                                         # 1085 项测试，statements 覆盖率 99.33%（vitest v8 工具链 v5 口径）
+npm test                                         # 1088 项测试，statements 覆盖率 99.39%（vitest v8 工具链 v5 口径）
 npm run build:portal                             # 门户 UI 产物（tsc + esbuild，直出 src/portal/public/）
 ```
 
@@ -152,8 +152,8 @@ MCP server 凭据唯一通道为 `envRefs` 环境变量引用占位（`${VAR}`�
 
 | 项 | 基线 | 口径 |
 |---|---|---|
-| 测试 | 1085/1085 全绿 | `npm test`（vitest run） |
-| 覆盖率 | statements 99.33%（4896/4929，TASK-282 基线 23c3a6b 亲跑锚点；执行环境若实测 ±1 条（如 4895 或 4897 条）属同族波动族）（全局门 ≥98.9，棘轮 95.5→95.55→96.1→96.2→96.6→96.8→97.0→97.2→97.4→98.6→98.9）+ 逐文件地板 80（执法源文件 87 个） | vitest v8（vitest 5 工具链）text 报表——工具链升级后按同套件定义重锚；口径见 `vitest.config.ts`（include `src/**/*.ts`，排除 cli/config/experiment/providers 适配层；逐文件地板备案例外 `src/types.ts`（类型定义文件）；contractSchema 例外已随 TASK-244 用例补齐回收，并入主地板；逐文件地板全树递归兜底 `src/**/!(types).ts`——src 全树任意深度 `.ts` 文件（含未来新建顶层目录，TASK-246；六目录内递归为 TASK-245）自动落入主地板 80，执法源文件 87 个（88 报告文件减 types.ts 例外，TASK-282 实测复核一致）；名义豁免面披露：任意目录下名为 `types.ts` 的文件不受逐文件地板约束、仍受全局聚合门约束——现行全树仅顶层 `src/types.ts`（既有备案例外）与 `src/providers/types.ts`（coverage 排除面），嵌套 `types.ts` 现不存在，行为已实测备案） |
+| 测试 | 1088/1088 全绿 | `npm test`（vitest run） |
+| 覆盖率 | statements 99.39%（4899/4929，TASK-312 基线 62a93ea 亲跑锚点；执行环境若实测 ±1 条（如 4898 或 4900 条）属同族波动族）（全局门 ≥99.1，棘轮 95.5→95.55→96.1→96.2→96.6→96.8→97.0→97.2→97.4→98.6→98.9→99.1）+ 逐文件地板 80（执法源文件 87 个） | vitest v8（vitest 5 工具链）text 报表——工具链升级后按同套件定义重锚；口径见 `vitest.config.ts`（include `src/**/*.ts`，排除 cli/config/experiment/providers 适配层；逐文件地板备案例外 `src/types.ts`（类型定义文件）；contractSchema 例外已随 TASK-244 用例补齐回收，并入主地板；逐文件地板全树递归兜底 `src/**/!(types).ts`——src 全树任意深度 `.ts` 文件（含未来新建顶层目录，TASK-246；六目录内递归为 TASK-245）自动落入主地板 80，执法源文件 87 个（88 报告文件减 types.ts 例外，TASK-282 实测复核一致）；名义豁免面披露：任意目录下名为 `types.ts` 的文件不受逐文件地板约束、仍受全局聚合门约束——现行全树仅顶层 `src/types.ts`（既有备案例外）与 `src/providers/types.ts`（coverage 排除面），嵌套 `types.ts` 现不存在，行为已实测备案） |
 | 类型 | `tsc` 0 错 | `npm run build` |
 | T3 扫描 | 零命中 | `npm run release-scan` |
 
