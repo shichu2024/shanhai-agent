@@ -118,7 +118,8 @@ export function boot(opts: BootOptions = {}): void {
   let activePage: PageHandle | null = null;
 
   function mountPage(route: ReturnType<typeof parseHash>['route'], query: Record<string, string>): void {
-    if (!view) return;
+    // TASK-316: 调用方守卫先行 · 唯一调用点 renderRoute 已对 view 缺失先行 return（if (!view) return），mountPage 内 view 必非空
+    if (!view) /* v8 ignore next */ return;
     const ctx: PageCtx = {
       doc,
       view,

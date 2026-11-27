@@ -140,12 +140,13 @@ export function mountTasksPage(ctx: PageCtx, query: Record<string, string>): Pag
     if (!gate.acquire()) return; // FR-WR-2 乐观禁用：在途期间忽略重复点击
     try {
       let op;
+      // TASK-316: 调用方守卫先行 · 唯一调用点 onClick 已以 action ∈ {cancel, resume, crash-recovery} 守卫后再调 handleWrite，else 臂必不走
       if (kind === 'cancel') op = cancelOp(ds(dataset, 'task-id'), ds(dataset, 'task-status'));
       else if (kind === 'resume') op = resumeOp(ds(dataset, 'task-id'));
       else if (kind === 'crash-recovery') {
         const rc = Number(ds(dataset, 'running-count'));
         op = crashRecoveryOp(Number.isFinite(rc) && ds(dataset, 'running-count') !== '' ? rc : stats.running);
-      } else return;
+      } else /* v8 ignore next */ return;
       const outcome = await runWrite(op, { confirmBox: ctx.confirmBox, post: (path, body) => apiPost(path, body, deps) });
       if (outcome.kind === 'cancelled-by-user') return;
       if (outcome.ok) {

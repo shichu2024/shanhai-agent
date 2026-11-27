@@ -136,7 +136,9 @@ export class ModelGateway {
         throw new TerminalModelFailure(verdict.subClass, `输出契约不满足（attempt ${attemptNo}/${opts.maxAttempts} 耗尽）：${verdict.message}`, verdict.violations, evt.eventId);
       }
     }
+    // TASK-316: 设计不可达防御 · for 尝试循环内每次必 return（成功）或 throw（失败耗尽），循环后无出口
     /* 不可达：循环内必 return 或 throw */
+    /* v8 ignore next */
     throw new TerminalModelFailure('internal_error', 'ModelGateway 不可达路径', [], null);
   }
 }

@@ -96,10 +96,11 @@ export function mountTaskDetailPage(ctx: PageCtx, taskId: string): PageHandle {
     if (!gate.acquire()) return;
     try {
       let op;
+      // TASK-316: 调用方守卫先行 · 唯一调用点 onClick 已以 action ∈ {cancel, resume, crash-recovery} 守卫后再调 handleWrite，else 臂必不走
       if (kind === 'cancel') op = cancelOp(ds(dataset, 'task-id') || taskId, ds(dataset, 'task-status') || task?.status || '');
       else if (kind === 'resume') op = resumeOp(ds(dataset, 'task-id') || taskId);
       else if (kind === 'crash-recovery') op = crashRecoveryOp(runningCount);
-      else return;
+      else /* v8 ignore next */ return;
       const outcome = await runWrite(op, { confirmBox: ctx.confirmBox, post: (path, body) => apiPost(path, body, deps) });
       if (outcome.kind === 'cancelled-by-user') return;
       if (outcome.ok) {
