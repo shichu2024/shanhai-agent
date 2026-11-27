@@ -432,6 +432,8 @@ export class TaskManager {
       if (err instanceof ApprovalPauseSignal) {
         // 取消优先于挂起（MEDIUM-3）：cancel 已置位时不落 Paused——取消意图不被审批挂起吞掉
         if (cancelRequested) {
+          // TASK-315: 竞速窗口 · 取消标志须在审批挂起信号上浮的微任务窗口内置位，executor 边界断言先行终局
+          /* v8 ignore next */
           this.mapTerminalFailure(taskId, base, spec, ledger, new CancelRequestedSignal());
           return this.getTask(taskId);
         }
