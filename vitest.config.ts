@@ -38,7 +38,7 @@ export default defineConfig({
       // TASK-312 第六十三批棘轮再进一档至 99.1（第六十二批覆盖蓄量 PR #92 后
       // 基线 44f0e85 实测 99.39%（4899/4929），余量 0.29pp 沿「先蓄量后进档」节奏）。
       // 逐文件地板门（TASK-243 每日优化第三十三批，TASK-174 备案 P3-① 落地）：
-      // vitest v5 语义下根级 perFile: true 会使全局聚合阈值（95.55）逐文件执法，
+      // vitest v5 语义下根级 perFile: true 会使全局聚合阈值（99.1）逐文件执法，
       // 故逐文件门采用 glob 条目携带 perFile 对象形态（语义等价：匹配文件逐文件 statements 地板）。
       // 主地板 80：基线 f7c5009 实测（json-summary），排除下述备案例外后，
       // 最低真文件为 portal/ui/observeEvidencePage.ts 81.70%，地板 80 留 1.7pp 余量。
@@ -58,7 +58,7 @@ export default defineConfig({
       // 名义豁免面披露：`!(types)` 形态豁免任意目录下名为 types.ts 的文件——
       // 现行全树仅顶层 src/types.ts（既有例外，语义不变）与 src/providers/types.ts
       // （coverage exclude 既有排除面，本就不受地板执法）；嵌套 types.ts 现不存在，
-      // 未来若新增将不受逐文件地板约束（仍受全局聚合门 95.55 约束）——结构性失真
+      // 未来若新增将不受逐文件地板约束（仍受全局聚合门 99.1 约束）——结构性失真
       // 备案随 TASK-243 备案例外一并记录，不借本批扩大回收。
       enabled: true,
       thresholds: {
