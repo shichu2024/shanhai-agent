@@ -210,6 +210,8 @@ export class ToolExecutor {
         }
       }
     }
+    // TASK-315: 设计不可达防御 · for 循环内每次尝试必 return（成功）或 throw（末次失败），循环后无出口
+    /* v8 ignore next */
     throw new ToolTerminalFailure('internal_error', 'ToolExecutor 不可达路径');
   }
 

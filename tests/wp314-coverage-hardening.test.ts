@@ -86,7 +86,7 @@ describe('wp314 releaseScan：safetensors 嗅探 stat/read 窗口（尺寸 ≥10
     }) as unknown as typeof fs.statSync);
     try {
       const findings = scanForRelease(root, DEFAULT_SCAN_CONFIG);
-      expect(findings).toEqual([]); // 行 264 false：无「safetensors 结构嗅探命中」；3 字节无 NUL → 文本扫描零命中
+      expect(findings).toEqual([]); // 行 264 false：无「safetensors 结构嗅探命中」；夹具含 NUL（0x00）→ 二进制探测判 binary 跳过，不进文本扫描
       expect(statMock.mock.calls.some(([p]) => samePath(target, p))).toBe(true); // 确实到达了 isSafetensors 的 stat
     } finally {
       statMock.mockImplementation(passThrough);

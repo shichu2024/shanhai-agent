@@ -431,6 +431,8 @@ export class CapabilityManager {
       if (err instanceof EvidenceRefError) {
         throw new CapabilityError(`证据 ref 格式非法：${err.message}`, 'invalid_ref', { ref: raw });
       }
+      // TASK-315: 设计不可达防御 · parseEvidenceRef 纯函数的全部 throw 点均为 EvidenceRefError，此处 rethrow 无非该类型来源
+      /* v8 ignore next */
       throw err;
     }
     const shown = this.deps.evidence.show(raw);
