@@ -17,7 +17,8 @@
     "test": "vitest run",
     "cli": "node dist/cli.js",
     "experiment": "node dist/experiment/run.js",
-    "release-scan": "node dist/scripts/releaseScan.js"
+    "release-scan": "node dist/scripts/releaseScan.js",
+    "coverage-ignore-audit": "node dist/scripts/coverageIgnoreAudit.js"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
