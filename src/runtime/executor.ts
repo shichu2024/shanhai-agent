@@ -336,7 +336,8 @@ function snapshotOf(
     messages,
     assistantToolCalls,
     resultsSoFar,
-    pendingIndex: err.callIndex ?? Math.max(0, assistantToolCalls.findIndex((c) => c.toolId === err.toolId)),
+    // TASK-316: 设计不可达防御 · snapshotOf 仅在 executor L321/322 回填 err.callIndex=i 之后被调用，?? 右臂兜底 findIndex 不可达（注解内联至箭头函数起点：该语句由箭头函数表达式体登记，随箭头一并移出）
+    pendingIndex: err.callIndex ?? Math.max(0, assistantToolCalls.findIndex(/* v8 ignore next */ (c) => c.toolId === err.toolId)),
     modelCallNo: callNos.modelCallNo,
     toolCallNo: callNos.toolCallNo,
   };

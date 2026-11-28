@@ -228,9 +228,15 @@ export class TaskManager {
     // ③ 落库后防御性复验：Input Contract 同一校验器复跑（漂移窗口捕获，仅经此路径可达 Input(contract_mismatch)）
     const recheck = checkInputContract(input, spec.inputContract);
     if (recheck.length > 0) {
+      // TASK-316: 漂移窗口 · createTask 同步函数，L200 首次校验与复验间无 await，同一校验器对同一 input/spec 必得同一结果（空），复验失败分支不可达
+      /* v8 ignore next */
       trace.recordTaskEvent(base, 'contract_checked', { which: 'input', verdict: false, violations: recheck });
+      // TASK-316: 漂移窗口 · 同上（failTask 与上行同块派生不可达）
+      /* v8 ignore next */
       this.failTask(taskId, base, 'Input', 'contract_mismatch', '创建时合法、复验时不合法（漂移窗口，A3 §3.1-③）',
         { expected: '符合 Input Contract', actual: '复验失败', violations: recheck });
+      // TASK-316: 漂移窗口 · 同上（throw 与上行同块派生不可达；内嵌 map 回调随 throw 一并移出）
+      /* v8 ignore next */
       throw new TaskCreationRejected('防御性复验失败：Input(contract_mismatch)', recheck.map((v) => ({ path: v.path, message: `期望 ${v.expected}，实际 ${v.actual}` })));
     }
     trace.recordTaskEvent(base, 'contract_checked', { which: 'input', verdict: true, violations: [] });
@@ -435,10 +441,16 @@ export class TaskManager {
           // TASK-315: 竞速窗口 · 取消标志须在审批挂起信号上浮的微任务窗口内置位，executor 边界断言先行终局
           /* v8 ignore next */
           this.mapTerminalFailure(taskId, base, spec, ledger, new CancelRequestedSignal());
+          // TASK-316: 竞速窗口 · 与上行 mapTerminalFailure 同块派生不可达（TASK-315 卡 ③ 依据同）
+          /* v8 ignore next */
           return this.getTask(taskId);
         }
         if (this.getTask(taskId).abortRequested === 1) {
+          // TASK-316: 竞速窗口 · 持久化 abortRequested 须在审批挂起信号上浮的微任务窗口内直写，executor 边界断言（assertAbortRequested）先行终局
+          /* v8 ignore next */
           this.mapTerminalFailure(taskId, base, spec, ledger, new TaskAbortedSignal({ callNo: 0, callKind: 'model', phase: 'boundary' }));
+          // TASK-316: 竞速窗口 · 同上（return 与上行同块派生不可达）
+          /* v8 ignore next */
           return this.getTask(taskId);
         }
         return this.persistPause(taskId, base, spec, err.pause);
@@ -447,13 +459,25 @@ export class TaskManager {
         // §4.4 委托等待挂起（R-2 写序：子 PauseSnapshot 已先行落库）：取消/中止优先，同 MEDIUM-3；
         // 复审 HIGH-1 修复：父在委托边界因取消/中止终局时，取消传播同样覆盖非终态子任务（与 cancel() paused 分支同不变式）
         if (cancelRequested) {
+          // TASK-316: 竞速窗口 · 父 cancelRequested 须在委托等待挂起信号上浮的微任务窗口内置位，子循环边界断言先行终局
+          /* v8 ignore next */
           this.cancelDescendants(taskId, this.forceCancellers.get(taskId) ?? 'runtime');
+          // TASK-316: 竞速窗口 · 同上（委托等待挂起 × 取消，同块派生不可达）
+          /* v8 ignore next */
           this.mapTerminalFailure(taskId, base, spec, ledger, new CancelRequestedSignal());
+          // TASK-316: 竞速窗口 · 同上（return 与上行同块派生不可达）
+          /* v8 ignore next */
           return this.getTask(taskId);
         }
         if (this.getTask(taskId).abortRequested === 1) {
+          // TASK-316: 竞速窗口 · 父持久化 abortRequested 须在委托等待挂起信号上浮的微任务窗口内直写，子循环边界断言先行终局
+          /* v8 ignore next */
           this.cancelDescendants(taskId, this.forceCancellers.get(taskId) ?? 'runtime');
+          // TASK-316: 竞速窗口 · 同上（委托等待挂起 × 中止，同块派生不可达）
+          /* v8 ignore next */
           this.mapTerminalFailure(taskId, base, spec, ledger, new TaskAbortedSignal({ callNo: 0, callKind: 'model', phase: 'boundary' }));
+          // TASK-316: 竞速窗口 · 同上（return 与上行同块派生不可达）
+          /* v8 ignore next */
           return this.getTask(taskId);
         }
         return this.persistDelegationWait(taskId, base, err.pause);
@@ -581,7 +605,8 @@ export class TaskManager {
   }
 
   private mapTerminalFailure(taskId: string, base: TaskBase, _spec: ExecSpec, ledger: TaskLedger, err: unknown): void {
-    if (err instanceof ExecutorSucceeded) throw err; // 不可达防御
+    // TASK-316: 调用方守卫先行 · runAgentLoop 以返回值（非 throw）交付 ExecutorSucceeded，runTask 的 catch 捕不到该类型；其余 4 个调用点均传入构造的取消/中止信号
+    if (err instanceof ExecutorSucceeded) /* v8 ignore next */ throw err; // 不可达防御
     if (err instanceof CancelRequestedSignal) {
       this.deps.state.transition(taskId, 'cancelled', { endedAt: nowNs(), cancelReason: 'user' });
       trace_event(this.deps, base, 'task_cancelled', {

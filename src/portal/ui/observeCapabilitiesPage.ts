@@ -93,7 +93,8 @@ export function mountObserveCapabilitiesPage(ctx: PageCtx, query: Record<string,
   }
 
   async function refresh(): Promise<void> {
-    if (authFailed) return;
+    // TASK-316: 调用方守卫先行 · authFailed 置位处均同步 poller.stop()，refresh 仅余挂载首调与 poller 两个入口，入口处 authFailed 必为 false
+    if (authFailed) /* v8 ignore next */ return;
     const [tasksRes, capsRes] = await Promise.all([
       apiGet(TASKS_PATH, deps),
       apiGet(CAPABILITIES_BASE, deps), // 选择器源（全量）

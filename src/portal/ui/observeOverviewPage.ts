@@ -97,7 +97,8 @@ export function mountObserveOverviewPage(ctx: PageCtx, opts: OverviewMountOption
   }
 
   async function refresh(): Promise<void> {
-    if (authFailed) return;
+    // TASK-316: 调用方守卫先行 · authFailed 置位处同步 poller.stop()，refresh 仅余挂载首调与 poller 两个入口，入口处 authFailed 必为 false
+    if (authFailed) /* v8 ignore next */ return;
     const [tasksRes, approvalsRes, capabilitiesRes] = await Promise.all([
       cachedGet(TASKS_PATH),
       cachedGet(PENDING_PATH),
